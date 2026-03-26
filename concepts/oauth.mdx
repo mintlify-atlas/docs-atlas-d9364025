@@ -1,0 +1,413 @@
+---
+title: OAuth
+description: Configure OAuth 2.0 social providers in Better Auth — sign in, link accounts, request scopes, pass additional data through the OAuth flow, refresh tokens, and customize provider behavior.
+---
+
+Better Auth has built-in support for OAuth 2.0 and OpenID Connect. You can authenticate users via Google, GitHub, Facebook, and many other providers.
+
+<Note>
+If your desired provider is not directly supported, use the [Generic OAuth Plugin](/plugins/generic-oauth) for custom integrations.
+</Note>
+
+## Configuring social providers
+
+Provide `clientId` and `clientSecret` for each provider you want to enable:
+
+```typescript title="auth.ts"
+import { betterAuth } from "better-auth";
+
+export const auth = betterAuth({
+  socialProviders: {
+    google: {
+      clientId: "YOUR_GOOGLE_CLIENT_ID",
+      clientSecret: "YOUR_GOOGLE_CLIENT_SECRET",
+    },
+  },
+});
+```
+
+## Usage
+
+### Sign in
+
+<CodeGroup>
+
+```typescript client-side.ts
+await authClient.signIn.social({
+  provider: "google",
+});
+```
+
+```typescript server-side.ts
+await auth.api.signInSocial({
+  body: {
+    provider: "google",
+  },
+});
+```
+
+</CodeGroup>
+
+### Link an account
+
+<CodeGroup>
+
+```typescript client-side.ts
+await authClient.linkSocial({
+  provider: "google",
+});
+```
+
+```typescript server-side.ts
+await auth.api.linkSocialAccount({
+  body: {
+    provider: "google",
+  },
+  headers: await headers(),
+});
+```
+
+</CodeGroup>
+
+### Get access token
+
+When you call `getAccessToken`, the token is automatically refreshed if it has expired.
+
+<CodeGroup>
+
+```typescript client-side.ts
+const { accessToken } = await authClient.getAccessToken({
+  providerId: "google",
+  accountId: "accountId", // optional
+});
+```
+
+```typescript server-side.ts
+await auth.api.getAccessToken({
+  body: {
+    providerId: "google",
+    accountId: "accountId", // optional
+    userId: "userId",       // optional, use instead of auth headers
+  },
+  headers: await headers(),
+});
+```
+
+</CodeGroup>
+
+### Get provider account info
+
+Retrieve provider-specific account details:
+
+<CodeGroup>
+
+```typescript client-side.ts
+const info = await authClient.accountInfo({
+  query: { accountId: "accountId" },
+});
+```
+
+```typescript server-side.ts
+await auth.api.accountInfo({
+  query: { accountId: "accountId" },
+  headers: await headers(),
+});
+```
+
+</CodeGroup>
+
+### Requesting additional scopes
+
+You can request additional OAuth scopes after initial sign-up by calling `linkSocial` with the same provider. This triggers a new OAuth flow requesting only the extra scopes while maintaining the existing account link.
+
+```typescript
+await authClient.linkSocial({
+  provider: "google",
+  scopes: ["https://www.googleapis.com/auth/drive.file"],
+});
+```
+
+<Note>
+Requires Better Auth v1.2.7 or later. Earlier versions may return a "Social account already linked" error when linking an existing provider for additional scopes.
+</Note>
+
+### Passing additional data through the OAuth flow
+
+Pass arbitrary data through the OAuth flow without storing it in the database. This is useful for referral codes, analytics sources, and other temporary metadata.
+
+```typescript
+// Sign in with additional data
+await authClient.signIn.social({
+  provider: "google",
+  additionalData: {
+    referralCode: "ABC123",
+    source: "landing-page",
+  },
+});
+
+// Link account with additional data
+await authClient.linkSocial({
+  provider: "google",
+  additionalData: {
+    referralCode: "ABC123",
+  },
+});
+```
+
+#### Accessing additional data in hooks
+
+Additional data is available in hooks during the OAuth callback via `getOAuthState`:
+
+```typescript title="auth.ts"
+import { betterAuth } from "better-auth";
+import { getOAuthState } from "better-auth/api";
+
+export const auth = betterAuth({
+  hooks: {
+    after: [
+      {
+        matcher: () => true,
+        handler: async (ctx) => {
+          if (ctx.path === "/callback/:id") {
+            const additionalData = await getOAuthState<{
+              referralCode?: string;
+              source?: string;
+            }>();
+
+            if (additionalData?.referralCode) {
+              // Always validate data from the client before trusting it
+              const isValidFormat = /^[A-Z0-9]{6}$/.test(additionalData.referralCode);
+              if (isValidFormat) {
+                const referral = await db.referrals.findByCode(additionalData.referralCode);
+                if (referral) {
+                  await db.referrals.incrementUsage(referral.id);
+                }
+              }
+            }
+
+            if (additionalData?.source) {
+              await analytics.track("oauth_signin", {
+                source: additionalData.source,
+                userId: ctx.context.session?.user.id,
+              });
+            }
+          }
+        },
+      },
+    ],
+  },
+});
+```
+
+<Warning>
+Additional OAuth data comes from the client. Always validate and sanitize it before using it in any logic.
+</Warning>
+
+#### Accessing additional data in database hooks
+
+```typescript title="auth.ts"
+import { getOAuthState } from "better-auth/api";
+
+// Inside databaseHooks.user.create.before:
+databaseHooks: {
+  user: {
+    create: {
+      before: async (user, ctx) => {
+        if (ctx.path === "/callback/:id") {
+          const additionalData = await getOAuthState<{ referredFrom?: string }>();
+          if (additionalData?.referredFrom) {
+            return {
+              data: {
+                referredFrom: additionalData.referredFrom,
+              },
+            };
+          }
+        }
+      },
+    },
+  },
+},
+```
+
+## Provider options
+
+### `scope`
+
+Specify the OAuth scopes to request:
+
+```typescript title="auth.ts"
+export const auth = betterAuth({
+  socialProviders: {
+    google: {
+      clientId: "YOUR_GOOGLE_CLIENT_ID",
+      clientSecret: "YOUR_GOOGLE_CLIENT_SECRET",
+      scope: ["email", "profile"],
+    },
+  },
+});
+```
+
+### `redirectURI`
+
+Override the default callback URL (`/api/auth/callback/{providerName}`):
+
+```typescript title="auth.ts"
+export const auth = betterAuth({
+  socialProviders: {
+    google: {
+      clientId: "YOUR_GOOGLE_CLIENT_ID",
+      clientSecret: "YOUR_GOOGLE_CLIENT_SECRET",
+      redirectURI: "https://your-app.com/auth/callback",
+    },
+  },
+});
+```
+
+### `mapProfileToUser`
+
+Map the provider profile to your user object. Useful for populating additional fields:
+
+```typescript title="auth.ts"
+export const auth = betterAuth({
+  socialProviders: {
+    google: {
+      clientId: "YOUR_GOOGLE_CLIENT_ID",
+      clientSecret: "YOUR_GOOGLE_CLIENT_SECRET",
+      mapProfileToUser: (profile) => ({
+        firstName: profile.given_name,
+        lastName: profile.family_name,
+      }),
+    },
+  },
+});
+```
+
+<Note>
+To pass additional fields via `mapProfileToUser`, configure `user.additionalFields` in your auth config. See [Extending the core schema](/concepts/database#extending-the-core-schema).
+</Note>
+
+### `refreshAccessToken`
+
+Provide a custom token refresh function for built-in social providers:
+
+```typescript title="auth.ts"
+export const auth = betterAuth({
+  socialProviders: {
+    google: {
+      clientId: "YOUR_GOOGLE_CLIENT_ID",
+      clientSecret: "YOUR_GOOGLE_CLIENT_SECRET",
+      refreshAccessToken: async (token) => ({
+        accessToken: "new-access-token",
+        refreshToken: "new-refresh-token",
+      }),
+    },
+  },
+});
+```
+
+### `getUserInfo`
+
+Override the default user info retrieval with a custom implementation:
+
+```typescript title="auth.ts"
+export const auth = betterAuth({
+  socialProviders: {
+    google: {
+      clientId: "YOUR_GOOGLE_CLIENT_ID",
+      clientSecret: "YOUR_GOOGLE_CLIENT_SECRET",
+      getUserInfo: async (token) => {
+        const response = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+          headers: { Authorization: `Bearer ${token.accessToken}` },
+        });
+        const profile = await response.json();
+        return {
+          user: {
+            id: profile.id,
+            name: profile.name,
+            email: profile.email,
+            image: profile.picture,
+            emailVerified: profile.verified_email,
+          },
+          data: profile,
+        };
+      },
+    },
+  },
+});
+```
+
+### `prompt`
+
+Control the authorization prompt behavior:
+
+```typescript title="auth.ts"
+export const auth = betterAuth({
+  socialProviders: {
+    google: {
+      clientId: "YOUR_GOOGLE_CLIENT_ID",
+      clientSecret: "YOUR_GOOGLE_CLIENT_SECRET",
+      prompt: "select_account", // "consent" | "login" | "none" | "select_account+consent"
+    },
+  },
+});
+```
+
+### `disableImplicitSignUp`
+
+When `true`, new users can only be created when `requestSignUp: true` is explicitly passed during sign-in:
+
+```typescript title="auth.ts"
+export const auth = betterAuth({
+  socialProviders: {
+    google: {
+      clientId: "YOUR_GOOGLE_CLIENT_ID",
+      clientSecret: "YOUR_GOOGLE_CLIENT_SECRET",
+      disableImplicitSignUp: true,
+    },
+  },
+});
+```
+
+### `disableDefaultScope`
+
+Remove the provider's default scopes (usually `email` and `profile`) and use only the scopes you specify:
+
+```typescript title="auth.ts"
+export const auth = betterAuth({
+  socialProviders: {
+    google: {
+      clientId: "YOUR_GOOGLE_CLIENT_ID",
+      clientSecret: "YOUR_GOOGLE_CLIENT_SECRET",
+      disableDefaultScope: true,
+      scope: ["https://www.googleapis.com/auth/userinfo.email"],
+    },
+  },
+});
+```
+
+### `overrideUserInfoOnSignIn`
+
+When `true`, updates the user record in the database with fresh data from the provider on every sign-in. Defaults to `false`.
+
+### `disableSignUp`
+
+Prevents new user accounts from being created via this provider. Existing users can still sign in.
+
+### `disableIdTokenSignIn`
+
+Disables ID token-based sign-in for providers that support it (e.g., Google, Apple). Enabled by default for those providers.
+
+### `clientKey`
+
+Used by providers like TikTok that use `clientKey` instead of `clientId`:
+
+```typescript title="auth.ts"
+export const auth = betterAuth({
+  socialProviders: {
+    tiktok: {
+      clientKey: "YOUR_TIKTOK_CLIENT_KEY",
+      clientSecret: "YOUR_TIKTOK_CLIENT_SECRET",
+    },
+  },
+});
+```

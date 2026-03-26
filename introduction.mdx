@@ -1,0 +1,107 @@
+---
+title: Introduction
+description: Better Auth is the most comprehensive authentication framework for TypeScript — framework-agnostic, extensible, and production-ready.
+---
+
+Better Auth is a framework-agnostic, universal authentication and authorization framework for TypeScript. It provides a comprehensive set of features out of the box and includes a plugin ecosystem that simplifies adding advanced functionality. Whether you need 2FA, passkeys, multi-tenancy, multi-session support, or enterprise features like SSO and OIDC, Better Auth lets you focus on building your application instead of reinventing auth.
+
+## Features
+
+Better Auth aims to be the most comprehensive auth library for TypeScript. Here are some of the capabilities available out of the box:
+
+<CardGroup cols={2}>
+  <Card title="Email & password" icon="envelope">
+    Built-in email and password authentication with configurable password policies, auto sign-in after registration, and email verification.
+  </Card>
+  <Card title="Social OAuth" icon="key">
+    30+ social providers including Google, GitHub, Apple, and Discord. Fully configurable with `clientId`, `clientSecret`, and callback URLs.
+  </Card>
+  <Card title="Two-factor authentication" icon="shield-halved">
+    TOTP-based 2FA with QR code setup, backup codes, and trusted device support via the `twoFactor` plugin.
+  </Card>
+  <Card title="Passkeys" icon="fingerprint">
+    WebAuthn-based passwordless authentication using device biometrics or hardware security keys.
+  </Card>
+  <Card title="Organizations & multi-tenancy" icon="building">
+    Team management with roles, permissions, invitations, and SCIM provisioning via the `organization` plugin.
+  </Card>
+  <Card title="OIDC & SSO" icon="id-card">
+    Act as an OpenID Connect provider or connect to enterprise identity providers using SAML SSO.
+  </Card>
+  <Card title="Plugin system" icon="puzzle-piece">
+    Extend Better Auth with magic links, username auth, phone number, anonymous sessions, API keys, and more.
+  </Card>
+  <Card title="Database adapters" icon="database">
+    Native adapters for Drizzle, Prisma, and MongoDB. Direct support for SQLite, PostgreSQL, and MySQL.
+  </Card>
+  <Card title="Type-safe by default" icon="code">
+    Full TypeScript inference across your server and client — no type casting or manual type definitions needed.
+  </Card>
+  <Card title="Framework agnostic" icon="layer-group">
+    Works with Next.js, Nuxt, SvelteKit, Hono, Express, Expo, and any runtime that supports standard `Request`/`Response` objects.
+  </Card>
+</CardGroup>
+
+...and much more!
+
+---
+
+## AI tooling
+
+Better Auth provides first-class support for AI-assisted development.
+
+### LLMs.txt
+
+Better Auth exposes an `llms.txt` file that helps AI models understand how to integrate with and configure your authentication system. You can find it at [https://better-auth.com/llms.txt](https://better-auth.com/llms.txt).
+
+### MCP server
+
+Better Auth provides an MCP (Model Context Protocol) server so you can use it with any AI model that supports MCP — including Cursor, Claude Code, and OpenCode.
+
+Use the `auth` CLI to add the Better Auth MCP server to your preferred AI coding assistant:
+
+<Tabs>
+  <Tab title="Claude Code">
+    ```bash
+    npx auth mcp --claude-code
+    ```
+  </Tab>
+  <Tab title="Cursor">
+    ```bash
+    npx auth mcp --cursor
+    ```
+  </Tab>
+  <Tab title="OpenCode">
+    ```bash
+    npx auth mcp --open-code
+    ```
+  </Tab>
+  <Tab title="Manual">
+    ```bash
+    npx auth mcp --manual
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  You can also run `npx auth mcp` without flags to get an interactive setup prompt that walks you through connecting to your MCP client.
+</Note>
+
+---
+
+## What's next
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install Better Auth, set up your database, and mount the route handler in your framework.
+  </Card>
+  <Card title="Basic usage" icon="play" href="/basic-usage">
+    Sign users up, sign them in, manage sessions, and use the client SDK.
+  </Card>
+  <Card title="Plugins overview" icon="puzzle-piece" href="/plugins/overview">
+    Explore the full plugin ecosystem — 2FA, organizations, passkeys, SSO, magic links, and more.
+  </Card>
+  <Card title="API reference" icon="code" href="/reference/options">
+    Browse all configuration options and the full public API surface.
+  </Card>
+</CardGroup>

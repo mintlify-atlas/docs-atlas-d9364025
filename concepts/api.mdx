@@ -1,0 +1,185 @@
+---
+title: REST API
+description: Better Auth's built-in REST API — calling endpoints server-side, handling headers, and error handling.
+---
+
+When you create a Better Auth instance it exposes an `api` object that mirrors every HTTP endpoint — including endpoints added by plugins. You can call these as regular TypeScript functions on the server, or hit them as HTTP endpoints from any client.
+
+## Base path
+
+All endpoints are mounted under `/api/auth` by default. You can change this with the [`basePath`](/reference/options#basepath) option.
+
+| Endpoint | Method | Description |
+| -------- | ------ | ----------- |
+| `/api/auth/sign-up/email` | POST | Register with email & password |
+| `/api/auth/sign-in/email` | POST | Sign in with email & password |
+| `/api/auth/sign-out` | POST | Invalidate the current session |
+| `/api/auth/get-session` | GET | Return the current session |
+| `/api/auth/sign-in/social` | POST | Initiate social OAuth flow |
+| `/api/auth/callback/:provider` | GET | OAuth callback handler |
+| `/api/auth/verify-email` | GET | Verify email with token |
+| `/api/auth/forget-password` | POST | Request a password-reset email |
+| `/api/auth/reset-password` | POST | Complete password reset |
+| `/api/auth/change-password` | POST | Change password (authenticated) |
+| `/api/auth/change-email` | POST | Change email (authenticated) |
+| `/api/auth/delete-user` | POST | Delete the authenticated user |
+| `/api/auth/list-sessions` | GET | List sessions for the current user |
+| `/api/auth/revoke-session` | POST | Revoke a specific session |
+| `/api/auth/revoke-other-sessions` | POST | Revoke all sessions except current |
+
+<Info>
+  Plugins register additional endpoints under the same base path. All
+  plugin endpoints are automatically available on the `api` object.
+</Info>
+
+## Calling endpoints server-side
+
+Import your `auth` instance and call endpoints directly as functions. This skips HTTP entirely — useful in server components, API routes, and middleware.
+
+```ts title="server.ts"
+import { auth } from "@/lib/auth";
+import { headers } from "next/headers";
+
+// get the current session
+const session = await auth.api.getSession({
+  headers: await headers(),
+});
+
+// sign in a user
+const result = await auth.api.signInEmail({
+  body: {
+    email: "user@example.com",
+    password: "password",
+  },
+});
+```
+
+### Body, headers, and query parameters
+
+Unlike the browser client, the server API accepts values as a plain object:
+
+| Key | Purpose |
+| --- | ------- |
+| `body` | Request body (POST/PUT payloads) |
+| `headers` | Request headers (required for session lookup) |
+| `query` | URL query parameters |
+
+```ts title="server.ts"
+import { auth } from "@/lib/auth";
+
+// body
+await auth.api.signInEmail({
+  body: { email: "john@doe.com", password: "password" },
+});
+
+// headers
+await auth.api.getSession({
+  headers: await headers(),
+});
+
+// query
+await auth.api.verifyEmail({
+  query: { token: "my_token" },
+});
+```
+
+<Info>
+  Better Auth's API layer is built on
+  [better-call](https://github.com/bekacru/better-call), a tiny web framework
+  that lets REST endpoints be called as regular TypeScript functions with full
+  type inference.
+</Info>
+
+## Retrieving response headers
+
+Use `returnHeaders: true` to get back the response `Headers` object alongside
+the data. This is useful when you need `Set-Cookie` headers.
+
+```ts title="server.ts"
+const { headers, response } = await auth.api.signUpEmail({
+  returnHeaders: true,
+  body: {
+    email: "john@doe.com",
+    password: "password",
+    name: "John Doe",
+  },
+});
+
+// extract cookies
+const cookies = headers.getSetCookie();
+```
+
+## Retrieving the raw Response object
+
+Pass `asResponse: true` to receive a standard `Response` instead of the
+deserialised data.
+
+```ts title="server.ts"
+const response = await auth.api.signInEmail({
+  asResponse: true,
+  body: { email: "", password: "" },
+});
+```
+
+## Error handling
+
+Server-side API calls throw an `APIError` on failure. Use `isAPIError` to
+narrow the error type.
+
+```ts title="server.ts"
+import { APIError, isAPIError } from "better-auth/api";
+
+try {
+  await auth.api.signInEmail({
+    body: { email: "", password: "" },
+  });
+} catch (error) {
+  if (isAPIError(error)) {
+    console.log(error.message); // human-readable message
+    console.log(error.status);  // HTTP status code string, e.g. "UNAUTHORIZED"
+  }
+}
+```
+
+## Calling endpoints via HTTP
+
+You can also call Better Auth endpoints with any HTTP client.
+
+<CodeGroup>
+
+```bash curl sign-up
+curl -X POST https://example.com/api/auth/sign-up/email \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com","password":"password","name":"Alice"}'
+```
+
+```bash curl sign-in
+curl -X POST https://example.com/api/auth/sign-in/email \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com","password":"password"}'
+```
+
+```bash curl get-session
+curl https://example.com/api/auth/get-session \
+  -H "Cookie: better-auth.session_token=<token>"
+```
+
+```bash curl sign-out
+curl -X POST https://example.com/api/auth/sign-out \
+  -H "Cookie: better-auth.session_token=<token>"
+```
+
+</CodeGroup>
+
+### Response format
+
+All endpoints return JSON. Successful responses use HTTP 2xx status codes.
+Error responses follow this shape:
+
+```json
+{
+  "message": "Invalid email or password",
+  "code": "INVALID_EMAIL_OR_PASSWORD",
+  "status": 401
+}
+```

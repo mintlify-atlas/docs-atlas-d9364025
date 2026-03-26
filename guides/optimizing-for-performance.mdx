@@ -1,0 +1,257 @@
+---
+title: Performance optimization
+description: Database indexing, session caching, background tasks, SSR prefetching, and bundle size tips for Better Auth.
+---
+
+This guide covers the most impactful techniques for improving the performance
+of a Better Auth application.
+
+---
+
+## Session caching with cookies
+
+By default, every call to `getSession` or `useSession` hits the database.
+Cookie caching stores a short-lived signed copy of the session in the browser,
+eliminating the database round-trip for repeated reads.
+
+```ts title="auth.ts"
+import { betterAuth } from "better-auth";
+
+export const auth = betterAuth({
+  session: {
+    cookieCache: {
+      enabled: true,
+      maxAge: 5 * 60, // 5 minutes
+    },
+  },
+});
+```
+
+This is analogous to using a short-lived JWT access token alongside a refresh
+token. The session is re-validated from the database after `maxAge` seconds.
+
+Read more in the [session management docs](/concepts/session-management#cookie-cache).
+
+---
+
+## Framework-level caching
+
+<Tabs>
+  <Tab title="Next.js">
+    Use the `"use cache"` directive (Next.js 15+) on server functions that
+    return user lists or other infrequently-changing data:
+
+    ```ts
+    export async function getUsers() {
+      "use cache";
+      const { users } = await auth.api.listUsers();
+      return users;
+    }
+    ```
+
+    Learn more in the [Next.js `use cache` docs](https://nextjs.org/docs/app/api-reference/directives/use-cache).
+  </Tab>
+
+  <Tab title="React Router">
+    Return `Cache-Control` headers from loaders:
+
+    ```ts
+    import { data } from "react-router";
+    import type { Route } from "./+types/your-route";
+
+    export const loader = async ({ request }: Route.LoaderArgs) => {
+      const { users } = await auth.api.listUsers();
+      return data(users, {
+        headers: { "Cache-Control": "max-age=3600" },
+      });
+    };
+
+    export function headers({ loaderHeaders }: Route.HeadersArgs) {
+      return loaderHeaders;
+    }
+    ```
+  </Tab>
+
+  <Tab title="SolidStart">
+    Wrap API calls with SolidStart's `query` primitive:
+
+    ```tsx
+    import { query } from "@solidjs/router";
+
+    const getUsers = query(
+      async () => (await auth.api.listUsers()).users,
+      "getUsers",
+    );
+    ```
+  </Tab>
+
+  <Tab title="TanStack Query">
+    Use `staleTime` to cache data in memory:
+
+    ```ts
+    import { useQuery } from "@tanstack/react-query";
+
+    export function useUsers() {
+      return useQuery({
+        queryKey: ["users"],
+        queryFn: async () => (await auth.api.listUsers()).users,
+        staleTime: 1000 * 60 * 15, // 15 minutes
+      });
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## SSR session prefetching
+
+Pre-fetch the session on the server and pass it as initial data to the client
+to avoid a waterfall request:
+
+```ts
+// In a server component or loader
+const session = await auth.api.getSession({
+  headers: await headers(),
+});
+
+// Pass `session` as a prop or via a data store to the client
+```
+
+---
+
+## Background tasks
+
+On serverless platforms, non-critical work like cleanup, analytics, and email
+can run after the response is sent using the `backgroundTasks` option. This
+reduces perceived latency without sacrificing correctness.
+
+```ts title="auth.ts"
+import { betterAuth } from "better-auth";
+import { createAuthMiddleware } from "better-auth/api";
+import { waitUntil } from "@vercel/functions";
+
+export const auth = betterAuth({
+  advanced: {
+    backgroundTasks: { handler: waitUntil },
+  },
+  hooks: {
+    after: createAuthMiddleware(async (ctx) => {
+      if (ctx.path === "/sign-up/email") {
+        ctx.context.runInBackground(
+          sendWelcomeEmail(ctx.context.newSession?.user.id),
+        );
+      }
+    }),
+  },
+});
+```
+
+See the [backgroundTasks option](/reference/options#advanced) and the
+[hooks docs](/concepts/hooks#runinbackground) for Cloudflare Workers examples.
+
+<Warning>
+  Background tasks introduce eventual consistency: the response returns before
+  deferred work completes. Only use this when your application can tolerate
+  brief inconsistency.
+</Warning>
+
+---
+
+## Database indexing
+
+Adding indexes to the core tables has the highest impact at scale. The table
+below lists the fields that benefit most from indexes:
+
+| Table | Fields to index | Plugin |
+| ----- | --------------- | ------ |
+| `users` | `email` | — |
+| `accounts` | `userId` | — |
+| `sessions` | `userId`, `token` | — |
+| `verifications` | `identifier` | — |
+| `invitations` | `email`, `organizationId` | organization |
+| `members` | `userId`, `organizationId` | organization |
+| `organizations` | `slug` | organization |
+| `passkey` | `userId` | passkey |
+| `twoFactor` | `secret` | two-factor |
+
+<Info>
+  Index support in the `generate` / `migrate` CLI commands is planned for a
+  future release.
+</Info>
+
+---
+
+## Bundle size optimization
+
+If you are using a custom ORM adapter (Prisma, Drizzle, MongoDB) you can
+reduce your server bundle by importing from `better-auth/minimal`. This
+variant omits the bundled Kysely dependency.
+
+<Tabs>
+  <Tab title="Prisma">
+    ```ts title="auth.ts"
+    import { betterAuth } from "better-auth/minimal";
+    import { prismaAdapter } from "better-auth/adapters/prisma";
+    import { PrismaClient } from "@prisma/client";
+
+    const prisma = new PrismaClient();
+
+    export const auth = betterAuth({
+      database: prismaAdapter(prisma, { provider: "postgresql" }),
+    });
+    ```
+  </Tab>
+
+  <Tab title="Drizzle">
+    ```ts title="auth.ts"
+    import { betterAuth } from "better-auth/minimal";
+    import { drizzleAdapter } from "better-auth/adapters/drizzle";
+    import { db } from "./database";
+
+    export const auth = betterAuth({
+      database: drizzleAdapter(db, { provider: "pg" }),
+    });
+    ```
+  </Tab>
+
+  <Tab title="MongoDB">
+    ```ts title="auth.ts"
+    import { betterAuth } from "better-auth/minimal";
+    import { mongodbAdapter } from "better-auth/adapters/mongodb";
+    import { MongoClient } from "mongodb";
+
+    const client = new MongoClient(process.env.DATABASE_URL!);
+
+    export const auth = betterAuth({
+      database: mongodbAdapter(client.db()),
+    });
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+  `better-auth/minimal` does not support direct database connections or
+  built-in migrations. Use a full `better-auth` import if you need those
+  features.
+</Warning>
+
+---
+
+## Rate limiting
+
+Better Auth includes built-in rate limiting. In high-traffic scenarios, using
+`secondaryStorage` (Redis, Cloudflare KV) for rate-limit counters instead of
+in-memory storage avoids state loss across serverless invocations:
+
+```ts
+rateLimit: {
+  enabled: true,
+  storage: "secondary-storage",
+  window: 10,
+  max: 100,
+  customRules: {
+    "/sign-in/email": { window: 10, max: 5 },
+  },
+}
+```

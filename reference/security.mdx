@@ -1,0 +1,295 @@
+---
+title: Security
+description: Security features in Better Auth — password hashing, CSRF protection, session management, trusted origins, and vulnerability disclosure.
+---
+
+This page covers the security features built into Better Auth and explains how
+to configure them for your use case.
+
+---
+
+## Password hashing
+
+Better Auth uses the `scrypt` algorithm to hash passwords by default. `scrypt`
+is memory-hard and CPU-intensive, making it resistant to brute-force and
+graphics card attacks.
+
+You can supply a custom implementation via the
+[`emailAndPassword.password`](/reference/options#emailandpassword) option:
+
+```ts
+emailAndPassword: {
+  password: {
+    hash: async (password) => bcrypt.hash(password, 10),
+    verify: async ({ hash, password }) => bcrypt.compare(password, hash),
+  },
+}
+```
+
+---
+
+## Secret key management
+
+The [`secret`](/reference/options#secret) option (or `BETTER_AUTH_SECRET`
+environment variable) is used for encryption and signing. Keep this value out
+of your source code.
+
+```bash
+# Generate a strong secret
+openssl rand -base64 32
+```
+
+### Secret rotation
+
+Better Auth supports **non-destructive secret rotation** via the
+[`secrets`](/reference/options#secrets) option. Encrypted data uses an
+envelope format that embeds the key version, so you can add a new key without
+invalidating existing sessions.
+
+```ts
+secrets: [
+  { version: 2, value: process.env.SECRET_V2! }, // current
+  { version: 1, value: process.env.SECRET_V1! }, // decryption-only
+]
+```
+
+Legacy data (encrypted before rotation) is still decryptable via the original
+`secret`. Data is lazily re-encrypted with the current key on next write. No
+database migrations or downtime required.
+
+---
+
+## CSRF protection
+
+Better Auth uses multiple layers to prevent Cross-Site Request Forgery:
+
+<AccordionGroup>
+  <Accordion title="1. Non-simple request requirement">
+    Better Auth only accepts requests with a non-simple `Content-Type` header
+    (i.e. `application/json`), which browsers will not send without a preflight
+    check. This eliminates most naive CSRF vectors.
+  </Accordion>
+
+  <Accordion title="2. Origin validation">
+    Every request's `Origin` header is verified against your `baseURL` and the
+    `trustedOrigins` list. Requests from untrusted origins are rejected with a
+    403.
+  </Accordion>
+
+  <Accordion title="3. SameSite cookies">
+    Session cookies are set with `SameSite=Lax` by default, which prevents
+    browsers from sending them with cross-site requests. You can override this
+    via [`advanced.defaultCookieAttributes`](/reference/options#advanced).
+  </Accordion>
+
+  <Accordion title="4. Fetch Metadata protection (first-login CSRF)">
+    For sign-in and sign-up routes that accept form submissions, Better Auth
+    uses [Fetch Metadata headers](https://developer.mozilla.org/en-US/docs/Web/Security/Attacks/CSRF#fetch_metadata)
+    (`Sec-Fetch-Site`, `Sec-Fetch-Mode`, `Sec-Fetch-Dest`) to block cross-site
+    navigation requests when no session cookie is present.
+
+    Browsers that do not send Fetch Metadata headers fall back to the standard
+    origin validation path.
+  </Accordion>
+
+  <Accordion title="5. No state mutations on GET requests">
+    GET requests are treated as read-only. Where a GET must trigger a mutation
+    (e.g. OAuth callbacks), Better Auth validates `nonce` and `state` parameters
+    to confirm request authenticity.
+  </Accordion>
+</AccordionGroup>
+
+### Disabling security checks
+
+<Warning>
+  Only disable these checks if you have a specific architectural reason to do
+  so. Disabling CSRF protection or origin validation opens your application to
+  attacks.
+</Warning>
+
+| Option | What it disables |
+| ------ | ---------------- |
+| `advanced.disableCSRFCheck` | CSRF protection only (origin header validation, Fetch Metadata) |
+| `advanced.disableOriginCheck` | URL validation **and** CSRF protection (backward compatibility) |
+
+```ts
+advanced: {
+  disableCSRFCheck: true, // only when you know what you're doing
+}
+```
+
+---
+
+## Session security
+
+### Expiration and rolling refresh
+
+Sessions expire after 7 days by default. Each time a session is used, if its
+age exceeds the `updateAge` threshold (default: 1 day) the expiry is extended.
+
+```ts
+session: {
+  expiresIn: 60 * 60 * 24 * 7,  // 7 days
+  updateAge: 60 * 60 * 24,      // refresh window: 1 day
+}
+```
+
+### Session revocation
+
+Authenticated users can revoke individual sessions or all sessions. This
+immediately invalidates the selected session tokens.
+
+See [session management](/concepts/session-management) for details.
+
+### Secure cookies
+
+Better Auth automatically sets the `Secure` cookie flag when `baseURL` uses
+`https`. Cookies are also `HttpOnly` by default to prevent JavaScript access.
+
+For cross-subdomain authentication:
+
+```ts
+advanced: {
+  crossSubDomainCookies: {
+    enabled: true,
+    domain: "example.com",
+  },
+}
+```
+
+---
+
+## Trusted origins
+
+Trusted origins prevent CSRF attacks and block open redirects. Requests from
+origins not on this list are automatically rejected.
+
+```ts
+trustedOrigins: [
+  "https://example.com",
+  "https://app.example.com",
+  "http://localhost:3000",
+]
+```
+
+### Wildcard patterns
+
+```ts
+trustedOrigins: [
+  "https://*.example.com",       // all HTTPS subdomains
+  "myapp://",                    // mobile deep-link scheme
+  "chrome-extension://ABC123",  // browser extension
+  "exp://10.0.0.*:*/**",        // Expo development
+]
+```
+
+<Warning>
+  Do not leave `localhost` in a production `trustedOrigins` list.
+</Warning>
+
+### Dynamic origins
+
+```ts
+trustedOrigins: async (request) => {
+  const origins = await db.getTrustedDomains();
+  return origins;
+}
+```
+
+<Info>
+  Dynamic origin functions are called on every request. Avoid slow database
+  queries here, or cache the result.
+</Info>
+
+---
+
+## Rate limiting
+
+Better Auth includes built-in rate limiting on all routes. Sensitive routes
+(sign-in, sign-up, password reset) have stricter default limits.
+
+Configure rate limiting in [`rateLimit`](/reference/options#ratelimit):
+
+```ts
+rateLimit: {
+  enabled: true,
+  window: 10,       // seconds
+  max: 100,
+  customRules: {
+    "/sign-in/email": { window: 10, max: 5 },
+  },
+  storage: "secondary-storage", // recommended for serverless
+}
+```
+
+---
+
+## IP address handling
+
+Better Auth uses client IP addresses for rate limiting and security monitoring.
+Configure which header to trust:
+
+```ts
+advanced: {
+  ipAddress: {
+    ipAddressHeaders: ["cf-connecting-ip"], // Cloudflare
+  },
+}
+```
+
+<Info>
+  Ensure your proxy is configured to set the header you configure here, and
+  that end users cannot forge it. In development, `127.0.0.1` is used as a
+  fallback when no IP can be determined.
+</Info>
+
+---
+
+## Trusted proxy headers
+
+When running behind a reverse proxy you can derive `baseURL` from
+`X-Forwarded-Host` and `X-Forwarded-Proto`:
+
+```ts
+advanced: {
+  trustedProxyHeaders: true,
+}
+```
+
+Resolution order when `trustedProxyHeaders` is enabled:
+
+1. Static `baseURL` from config (proxy headers ignored)
+2. `BETTER_AUTH_URL` environment variable
+3. `X-Forwarded-Host` + `X-Forwarded-Proto` headers
+4. Request URL origin (final fallback)
+
+<Warning>
+  Only enable `trustedProxyHeaders` when your load balancer controls these
+  headers and end users cannot forge them.
+</Warning>
+
+---
+
+## OAuth state and PKCE
+
+Better Auth stores OAuth `state` and PKCE `code_verifier` values per-request
+to prevent CSRF attacks and code-injection threats. These are deleted
+automatically after the OAuth flow completes.
+
+---
+
+## Email enumeration protection
+
+When `requireEmailVerification` is enabled or `autoSignIn` is `false`, the
+sign-up endpoint returns the same `200` response whether or not the email is
+already registered. Timing attacks are mitigated by simulating password hashing
+for duplicate attempts, following
+[OWASP authentication best practices](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html#authentication-and-error-messages).
+
+---
+
+## Reporting vulnerabilities
+
+If you discover a security vulnerability in Better Auth, please report it to
+[security@better-auth.com](mailto:security@better-auth.com). All reports are
+addressed promptly. Credit is given for validated discoveries.

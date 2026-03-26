@@ -1,0 +1,679 @@
+---
+title: Configuration Reference
+description: Complete reference for all betterAuth() configuration options.
+---
+
+This page documents every option accepted by `betterAuth()`. For the full TypeScript source, see [`packages/better-auth/src/types/options.ts`](https://github.com/better-auth/better-auth/blob/main/packages/better-auth/src/types/options.ts).
+
+## Quick example
+
+```ts title="auth.ts"
+import { betterAuth } from "better-auth";
+
+export const auth = betterAuth({
+  appName: "My App",
+  baseURL: "https://example.com",
+  secret: process.env.BETTER_AUTH_SECRET,
+  database: { dialect: "postgres", type: "postgres" },
+  emailAndPassword: { enabled: true },
+  socialProviders: {
+    github: {
+      clientId: process.env.GITHUB_CLIENT_ID!,
+      clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+    },
+  },
+});
+```
+
+---
+
+## Top-level options
+
+<ParamField path="appName" type="string">
+  The human-readable name of your application. Used in emails and the default
+  error page.
+
+  ```ts
+  appName: "My App"
+  ```
+</ParamField>
+
+<ParamField path="baseURL" type="string">
+  Root URL where your application server is hosted. If a path component is
+  included it takes precedence over `basePath`.
+
+  Falls back to the `BETTER_AUTH_URL` environment variable, then to request
+  inference. Always set this explicitly in production.
+
+  ```ts
+  baseURL: "https://example.com"
+  ```
+
+  <Warning>
+    Relying on request inference is not recommended. For security and stability,
+    always set `baseURL` explicitly or via the `BETTER_AUTH_URL` environment
+    variable.
+  </Warning>
+</ParamField>
+
+<ParamField path="basePath" type="string" default="/api/auth">
+  The path prefix where Better Auth routes are mounted. Overridden when
+  `baseURL` includes a path.
+
+  ```ts
+  basePath: "/api/auth"
+  ```
+</ParamField>
+
+<ParamField path="secret" type="string">
+  Secret used for encryption, signing, and hashing. In production Better Auth
+  throws if this is not set.
+
+  Reads from `BETTER_AUTH_SECRET` or `AUTH_SECRET` environment variables when
+  not provided explicitly.
+
+  ```bash
+  # generate a strong secret
+  openssl rand -base64 32
+  ```
+
+  ```ts
+  secret: process.env.BETTER_AUTH_SECRET
+  ```
+</ParamField>
+
+<ParamField path="secrets" type="Array<{ version: number; value: string }>">
+  Versioned secrets for non-destructive secret rotation. The first entry is the
+  **active** key for all new encryption; remaining entries are decryption-only.
+
+  ```ts
+  secrets: [
+    { version: 2, value: "new-secret-key" },
+    { version: 1, value: "old-secret-key" },
+  ]
+  ```
+
+  Can also be set via the `BETTER_AUTH_SECRETS` environment variable:
+
+  ```txt title=".env"
+  BETTER_AUTH_SECRETS=2:new-secret-base64,1:old-secret-base64
+  ```
+
+  When `secrets` is configured, the singular `secret` is only used as a fallback
+  for decrypting legacy data. Both can coexist during migration.
+</ParamField>
+
+<ParamField path="trustedOrigins" type="string[] | ((request?: Request) => string[] | Promise<string[]>)">
+  Origins allowed to make cross-origin requests. Accepts a static array,
+  wildcard patterns, or an async function for dynamic resolution.
+
+  **Static:**
+
+  ```ts
+  trustedOrigins: ["http://localhost:3000", "https://example.com"]
+  ```
+
+  **Wildcard patterns:**
+
+  ```ts
+  trustedOrigins: [
+    "https://*.example.com",      // all HTTPS subdomains
+    "myapp://",                    // mobile deep-link scheme
+    "chrome-extension://ABC123",  // browser extension
+  ]
+  ```
+
+  | Pattern | Description |
+  | ------- | ----------- |
+  | `?` | Matches exactly one character (not `/`) |
+  | `*` | Matches zero or more characters that don't cross `/` |
+  | `**` | Matches zero or more characters including `/` |
+
+  **Dynamic:**
+
+  ```ts
+  trustedOrigins: async (request) => {
+    if (!request) return ["https://my-frontend.com"];
+    return ["https://dynamic-origin.com"];
+  }
+  ```
+
+  <Info>
+    The `request` parameter is `undefined` during initialization and when
+    calling `auth.api` directly. Always return default origins for the
+    `undefined` case.
+  </Info>
+</ParamField>
+
+<ParamField path="plugins" type="BetterAuthPlugin[]">
+  List of Better Auth plugins to load.
+
+  ```ts
+  import { emailOTP } from "better-auth/plugins";
+
+  plugins: [
+    emailOTP({
+      sendVerificationOTP: async ({ email, otp, type }) => {
+        // send OTP
+      },
+    }),
+  ]
+  ```
+</ParamField>
+
+<ParamField path="disabledPaths" type="string[]">
+  Auth paths that should return 404. Useful for disabling sign-up in
+  closed-beta or invite-only apps.
+
+  ```ts
+  disabledPaths: ["/sign-up/email"]
+  ```
+</ParamField>
+
+<ParamField path="telemetry" type="{ enabled: boolean }" default="{ enabled: false }">
+  Controls anonymous usage telemetry sent to the Better Auth team.
+
+  ```ts
+  telemetry: { enabled: false }
+  ```
+</ParamField>
+
+---
+
+## `database`
+
+<ParamField path="database" type="DatabaseConfiguration">
+  Primary database configuration. Supports PostgreSQL, MySQL, and SQLite via
+  the built-in Kysely adapter, or any ORM adapter (Prisma, Drizzle, MongoDB).
+
+  ```ts
+  database: {
+    dialect: "postgres",
+    type: "postgres",
+    casing: "camel",
+  }
+  ```
+
+  Read the [database docs](/concepts/database) for adapter-specific setup.
+</ParamField>
+
+<ParamField path="secondaryStorage" type="SecondaryStorageConfig">
+  Optional fast key-value storage (Redis, Cloudflare KV, etc.) for sessions,
+  verification tokens, and rate-limit counters.
+
+  ```ts
+  secondaryStorage: {
+    get: async (key) => redis.get(key),
+    set: async (key, value, ttl) => redis.set(key, value, "EX", ttl),
+    delete: async (key) => redis.del(key),
+  }
+  ```
+</ParamField>
+
+---
+
+## `emailAndPassword`
+
+<ParamField path="emailAndPassword.enabled" type="boolean" default="false">
+  Enable email and password authentication.
+</ParamField>
+
+<ParamField path="emailAndPassword.disableSignUp" type="boolean" default="false">
+  Prevent new accounts from being created via email/password.
+</ParamField>
+
+<ParamField path="emailAndPassword.requireEmailVerification" type="boolean">
+  Block session creation until the user verifies their email.
+</ParamField>
+
+<ParamField path="emailAndPassword.minPasswordLength" type="number" default="8">
+  Minimum accepted password length.
+</ParamField>
+
+<ParamField path="emailAndPassword.maxPasswordLength" type="number" default="128">
+  Maximum accepted password length.
+</ParamField>
+
+<ParamField path="emailAndPassword.autoSignIn" type="boolean" default="true">
+  Automatically create a session after a successful sign-up.
+</ParamField>
+
+<ParamField path="emailAndPassword.sendResetPassword" type="(opts: { user, url, token }) => Promise<void>">
+  Function called to deliver the password-reset email.
+
+  ```ts
+  sendResetPassword: async ({ user, url, token }) => {
+    await mailer.send({ to: user.email, subject: "Reset password", html: url });
+  }
+  ```
+</ParamField>
+
+<ParamField path="emailAndPassword.resetPasswordTokenExpiresIn" type="number" default="3600">
+  Seconds until a reset-password token expires.
+</ParamField>
+
+<ParamField path="emailAndPassword.revokeSessionsOnPasswordReset" type="boolean" default="false">
+  Revoke all other sessions when a user resets their password.
+</ParamField>
+
+<ParamField path="emailAndPassword.password" type="{ hash, verify }">
+  Override the default `scrypt` password hashing with a custom implementation.
+
+  ```ts
+  password: {
+    hash: async (password) => bcrypt.hash(password, 10),
+    verify: async ({ hash, password }) => bcrypt.compare(password, hash),
+  }
+  ```
+</ParamField>
+
+---
+
+## `emailVerification`
+
+<ParamField path="emailVerification.sendVerificationEmail" type="(opts: { user, url, token }) => Promise<void>">
+  Function called to send verification emails.
+
+  ```ts
+  sendVerificationEmail: async ({ user, url, token }) => {
+    await mailer.send({ to: user.email, subject: "Verify email", html: url });
+  }
+  ```
+</ParamField>
+
+<ParamField path="emailVerification.sendOnSignUp" type="boolean">
+  Send a verification email automatically after sign-up. When `undefined`,
+  follows the `requireEmailVerification` setting.
+</ParamField>
+
+<ParamField path="emailVerification.autoSignInAfterVerification" type="boolean">
+  Automatically sign the user in after they verify their email.
+</ParamField>
+
+<ParamField path="emailVerification.expiresIn" type="number" default="3600">
+  Seconds until a verification token expires.
+</ParamField>
+
+---
+
+## `socialProviders`
+
+Configure one or more OAuth / OIDC providers. Each key is a provider slug.
+
+<ParamField path="socialProviders.[provider].clientId" type="string" required>
+  OAuth client ID issued by the provider.
+</ParamField>
+
+<ParamField path="socialProviders.[provider].clientSecret" type="string" required>
+  OAuth client secret issued by the provider.
+</ParamField>
+
+<ParamField path="socialProviders.[provider].redirectURI" type="string">
+  Custom callback URL. Defaults to
+  `{baseURL}/api/auth/callback/{provider}`.
+</ParamField>
+
+<ParamField path="socialProviders.[provider].scope" type="string[]">
+  Additional OAuth scopes to request beyond the provider defaults.
+</ParamField>
+
+<ParamField path="socialProviders.[provider].mapProfileToUser" type="(profile) => Partial<User>">
+  Transform the raw provider profile into Better Auth user fields.
+</ParamField>
+
+<ParamField path="socialProviders.[provider].disableSignUp" type="boolean">
+  Prevent new accounts from being created through this provider.
+</ParamField>
+
+```ts
+socialProviders: {
+  google: {
+    clientId: process.env.GOOGLE_CLIENT_ID!,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+  },
+  github: {
+    clientId: process.env.GITHUB_CLIENT_ID!,
+    clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+  },
+}
+```
+
+---
+
+## `session`
+
+<ParamField path="session.modelName" type="string" default="session">
+  Database table/model name for sessions.
+</ParamField>
+
+<ParamField path="session.expiresIn" type="number" default="604800">
+  Session lifetime in seconds (default: 7 days).
+</ParamField>
+
+<ParamField path="session.updateAge" type="number" default="86400">
+  Extend the session expiry when the session age exceeds this threshold
+  (seconds). Set to `0` to refresh on every request.
+</ParamField>
+
+<ParamField path="session.disableSessionRefresh" type="boolean" default="false">
+  Disable automatic expiry extension regardless of `updateAge`.
+</ParamField>
+
+<ParamField path="session.additionalFields" type="Record<string, FieldConfig>">
+  Extra fields to store on the session record.
+</ParamField>
+
+<ParamField path="session.storeSessionInDatabase" type="boolean" default="false">
+  Persist sessions in the primary database even when `secondaryStorage` is
+  configured.
+</ParamField>
+
+<ParamField path="session.cookieCache" type="{ enabled: boolean; maxAge: number }">
+  Cache session data in a short-lived signed cookie to avoid a database
+  round-trip on every request.
+
+  ```ts
+  cookieCache: {
+    enabled: true,
+    maxAge: 300, // 5 minutes
+  }
+  ```
+</ParamField>
+
+```ts
+session: {
+  expiresIn: 604800,   // 7 days
+  updateAge: 86400,    // refresh once per day
+  cookieCache: {
+    enabled: true,
+    maxAge: 300,
+  },
+}
+```
+
+---
+
+## `user`
+
+<ParamField path="user.modelName" type="string" default="user">
+  Database table/model name for users.
+</ParamField>
+
+<ParamField path="user.fields" type="Record<string, string>">
+  Map built-in field names to different database column names.
+
+  ```ts
+  fields: { email: "emailAddress", name: "fullName" }
+  ```
+</ParamField>
+
+<ParamField path="user.additionalFields" type="Record<string, FieldConfig>">
+  Extra fields added to the user table. Set `input: false` for fields that
+  should not be settable by the client (e.g. `role`).
+
+  ```ts
+  additionalFields: {
+    role: { type: "string", input: false },
+  }
+  ```
+</ParamField>
+
+<ParamField path="user.changeEmail" type="ChangeEmailConfig">
+  Configuration for the change-email flow.
+
+  - `enabled` — allow authenticated users to change their email
+  - `sendChangeEmailConfirmation` — function to deliver confirmation link
+</ParamField>
+
+<ParamField path="user.deleteUser" type="DeleteUserConfig">
+  Configuration for account deletion.
+
+  - `enabled` — allow users to delete their own account
+  - `sendDeleteAccountVerification` — function to deliver confirmation link
+  - `beforeDelete` / `afterDelete` — lifecycle callbacks
+</ParamField>
+
+---
+
+## `account`
+
+<ParamField path="account.encryptOAuthTokens" type="boolean" default="false">
+  Encrypt access/refresh tokens before writing them to the database.
+</ParamField>
+
+<ParamField path="account.accountLinking.enabled" type="boolean" default="true">
+  Allow users to link multiple OAuth providers to one account.
+</ParamField>
+
+<ParamField path="account.accountLinking.trustedProviders" type="string[] | ((request?) => string[])">
+  Providers whose verified email is trusted for automatic account linking.
+
+  ```ts
+  trustedProviders: ["google", "github", "email-password"]
+  ```
+</ParamField>
+
+---
+
+## `rateLimit`
+
+<ParamField path="rateLimit.enabled" type="boolean">
+  Defaults to `true` in production, `false` in development.
+</ParamField>
+
+<ParamField path="rateLimit.window" type="number" default="10">
+  Time window in seconds.
+</ParamField>
+
+<ParamField path="rateLimit.max" type="number" default="100">
+  Maximum requests per window across all routes.
+</ParamField>
+
+<ParamField path="rateLimit.customRules" type="Record<string, { window: number; max: number }>">
+  Per-path overrides.
+
+  ```ts
+  customRules: {
+    "/sign-in/email": { window: 10, max: 5 },
+  }
+  ```
+</ParamField>
+
+<ParamField path="rateLimit.storage" type="'memory' | 'database' | 'secondary-storage'" default="memory">
+  Where to persist rate-limit counters.
+</ParamField>
+
+```ts
+rateLimit: {
+  enabled: true,
+  window: 10,
+  max: 100,
+  customRules: {
+    "/sign-in/email": { window: 10, max: 5 },
+  },
+}
+```
+
+---
+
+## `advanced`
+
+<ParamField path="advanced.useSecureCookies" type="boolean" default="false">
+  Force the `Secure` flag on cookies regardless of protocol. Automatically
+  `true` when `baseURL` uses `https`.
+</ParamField>
+
+<ParamField path="advanced.disableCSRFCheck" type="boolean" default="false">
+  Disable all CSRF protection including origin header validation and Fetch
+  Metadata checks.
+
+  <Warning>Disabling CSRF checks exposes your application to CSRF attacks.</Warning>
+</ParamField>
+
+<ParamField path="advanced.disableOriginCheck" type="boolean" default="false">
+  Disable URL validation for `callbackURL`, `redirectTo`, and other redirect
+  targets. Also disables CSRF protection for backward compatibility.
+
+  <Warning>Disabling origin checks opens your app to open-redirect attacks.</Warning>
+</ParamField>
+
+<ParamField path="advanced.crossSubDomainCookies" type="{ enabled: boolean; domain: string; additionalCookies?: string[] }">
+  Share session cookies across subdomains.
+
+  ```ts
+  crossSubDomainCookies: {
+    enabled: true,
+    domain: "example.com",
+  }
+  ```
+</ParamField>
+
+<ParamField path="advanced.cookiePrefix" type="string">
+  Custom prefix for all cookie names.
+</ParamField>
+
+<ParamField path="advanced.ipAddress.ipAddressHeaders" type="string[]">
+  Trusted headers to read the client IP from.
+
+  ```ts
+  ipAddressHeaders: ["cf-connecting-ip"]
+  ```
+</ParamField>
+
+<ParamField path="advanced.database.generateId" type="function | false | 'serial' | 'uuid'">
+  Override the default nanoid-based ID generation.
+
+  - `false` — let the database generate IDs
+  - `"serial"` — use auto-increment
+  - `"uuid"` — use random UUID
+  - function — custom generator `(opts: { model, size? }) => string`
+</ParamField>
+
+<ParamField path="advanced.backgroundTasks.handler" type="(promise: Promise<unknown>) => void">
+  Defer non-critical work to run after the response is sent. Pass
+  `waitUntil` from your serverless platform.
+
+  ```ts
+  // Vercel
+  import { waitUntil } from "@vercel/functions";
+  backgroundTasks: { handler: waitUntil }
+
+  // Cloudflare Workers
+  backgroundTasks: { handler: (p) => ctx.waitUntil(p) }
+  ```
+
+  <Warning>
+    Enabling background tasks introduces eventual consistency — the response
+    may return optimistic data before the database is updated.
+  </Warning>
+</ParamField>
+
+<ParamField path="advanced.skipTrailingSlashes" type="boolean" default="false">
+  Treat routes with and without a trailing slash as equivalent.
+</ParamField>
+
+---
+
+## `logger`
+
+<ParamField path="logger.level" type="'debug' | 'info' | 'warn' | 'error'" default="warn">
+  Minimum log level to output.
+</ParamField>
+
+<ParamField path="logger.disabled" type="boolean" default="false">
+  Suppress all log output.
+</ParamField>
+
+<ParamField path="logger.log" type="(level, message, ...args) => void">
+  Replace the built-in logger with a custom implementation.
+
+  ```ts
+  log: (level, message, ...args) => {
+    myLoggingService.log({ level, message, metadata: args });
+  }
+  ```
+</ParamField>
+
+---
+
+## `databaseHooks`
+
+Run code before or after core database operations. The `before` hook can
+return modified data; the `after` hook is fire-and-forget.
+
+```ts
+databaseHooks: {
+  user: {
+    create: {
+      before: async (user) => {
+        return { data: { ...user, role: "member" } };
+      },
+      after: async (user) => {
+        await analytics.track("user_created", { id: user.id });
+      },
+    },
+  },
+  session: { /* ... */ },
+  account: { /* ... */ },
+  verification: { /* ... */ },
+}
+```
+
+---
+
+## `hooks`
+
+Request-level middleware that runs before or after every matched request.
+
+```ts
+import { createAuthMiddleware } from "better-auth/api";
+
+hooks: {
+  before: createAuthMiddleware(async (ctx) => {
+    console.log("→", ctx.path);
+  }),
+  after: createAuthMiddleware(async (ctx) => {
+    console.log("←", ctx.context.returned);
+  }),
+}
+```
+
+See the [hooks documentation](/concepts/hooks) for full details.
+
+---
+
+## `onAPIError`
+
+<ParamField path="onAPIError.throw" type="boolean" default="false">
+  Re-throw API errors instead of returning an error response.
+</ParamField>
+
+<ParamField path="onAPIError.onError" type="(error, ctx) => void">
+  Custom error handler invoked on every API error.
+</ParamField>
+
+<ParamField path="onAPIError.errorURL" type="string" default="/api/auth/error">
+  Redirect target for errors that occur in browser flows.
+</ParamField>
+
+<ParamField path="onAPIError.customizeDefaultErrorPage" type="ErrorPageTheme">
+  Customize colors, sizes, and fonts of the built-in error page at
+  `/api/auth/error`.
+</ParamField>
+
+---
+
+## `verification`
+
+<ParamField path="verification.disableCleanup" type="boolean" default="false">
+  Skip deleting expired verification records on read.
+</ParamField>
+
+<ParamField path="verification.storeIdentifier" type="'plain' | 'hashed' | CustomHasher">
+  How to store verification identifiers (OTP keys, magic-link tokens, etc.).
+</ParamField>
+
+<ParamField path="verification.storeInDatabase" type="boolean" default="false">
+  Write verification records to the primary database even when
+  `secondaryStorage` is configured.
+</ParamField>

@@ -1,0 +1,262 @@
+---
+title: Two-factor authentication
+description: Add TOTP and OTP-based two-factor authentication with backup codes and trusted devices.
+---
+
+The two-factor authentication (2FA) plugin adds a second verification step after a user signs in with their password. It supports:
+
+- **TOTP** — time-based codes from an authenticator app (Google Authenticator, Authy, etc.)
+- **OTP** — one-time codes sent to the user's email or phone
+- **Backup codes** — single-use recovery codes
+- **Trusted devices** — skip 2FA on recognized devices for 30 days
+
+## Installation
+
+<Steps>
+  <Step title="Add the server plugin">
+    Import `twoFactor` and add it to your plugins list. Set `appName` to customize the issuer shown in authenticator apps:
+
+    ```ts title="auth.ts"
+    import { betterAuth } from "better-auth";
+    import { twoFactor } from "better-auth/plugins";
+
+    export const auth = betterAuth({
+      appName: "My App", // shown as the issuer in authenticator apps
+      plugins: [
+        twoFactor(),
+      ],
+    });
+    ```
+  </Step>
+
+  <Step title="Run the database migration">
+    The plugin adds a `twoFactorEnabled` column to the `user` table and creates a `twoFactor` table:
+
+    <Tabs>
+      <Tab title="migrate">
+        ```bash
+        npx auth migrate
+        ```
+      </Tab>
+      <Tab title="generate">
+        ```bash
+        npx auth generate
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Add the client plugin">
+    Import `twoFactorClient` and configure where to redirect users who need to complete 2FA:
+
+    ```ts title="auth-client.ts"
+    import { createAuthClient } from "better-auth/client";
+    import { twoFactorClient } from "better-auth/client/plugins";
+
+    export const authClient = createAuthClient({
+      plugins: [
+        twoFactorClient({
+          // Option 1: redirect to a page
+          twoFactorPage: "/two-factor",
+          // Option 2: handle programmatically (avoids full page reload)
+          // onTwoFactorRedirect() {
+          //   router.push("/two-factor");
+          // },
+        }),
+      ],
+    });
+    ```
+
+    <Note>
+      Using `twoFactorPage` causes a full page reload when redirecting. Use `onTwoFactorRedirect` to handle the redirect programmatically and avoid a reload.
+    </Note>
+  </Step>
+</Steps>
+
+## Usage
+
+### Enable 2FA for a user
+
+Call `twoFactor.enable` with the user's current password. The server generates a TOTP secret and backup codes:
+
+```ts title="enable-2fa.ts"
+import { authClient } from "@/lib/auth-client";
+
+const { data, error } = await authClient.twoFactor.enable({
+  password: "user-current-password",
+});
+
+if (data) {
+  // data.totpURI — use this to generate a QR code for the user to scan
+  // data.backupCodes — show these to the user once; they cannot be retrieved again
+  console.log(data.totpURI);
+  console.log(data.backupCodes);
+}
+```
+
+<Warning>
+  `twoFactorEnabled` is not set to `true` until the user verifies a TOTP code. This ensures the user has successfully scanned the QR code before 2FA is enforced. You can skip this requirement by setting `skipVerificationOnEnable: true` in the plugin config.
+</Warning>
+
+### Display a QR code
+
+Use the `totpURI` to render a scannable QR code:
+
+```tsx title="two-factor-setup.tsx"
+import { authClient } from "@/lib/auth-client";
+import QRCode from "react-qr-code";
+
+export function TwoFactorSetup({ password }: { password: string }) {
+  const { data: session } = authClient.useSession();
+
+  const { data: qrData } = useQuery({
+    queryKey: ["totp-uri"],
+    queryFn: async () => {
+      const res = await authClient.twoFactor.getTotpUri({ password });
+      return res.data;
+    },
+    enabled: !!session?.user.twoFactorEnabled,
+  });
+
+  return <QRCode value={qrData?.totpURI ?? ""} />;
+}
+```
+
+### Verify a TOTP code
+
+After the user scans the QR code, verify the first code to confirm setup:
+
+```ts title="verify-totp.ts"
+import { authClient } from "@/lib/auth-client";
+
+const { data, error } = await authClient.twoFactor.verifyTotp({
+  code: "123456",      // 6-digit code from the authenticator app
+  trustDevice: true,   // remember this device for 30 days
+});
+```
+
+Better Auth accepts TOTP codes from the current 30-second window, plus one window before and after, to account for clock drift.
+
+### Sign in with 2FA enabled
+
+When a user with 2FA enabled signs in, the response includes `twoFactorRedirect: true`. Handle it in the `onSuccess` callback:
+
+```ts title="sign-in.ts"
+import { authClient } from "@/lib/auth-client";
+
+await authClient.signIn.email(
+  {
+    email: "user@example.com",
+    password: "password123",
+  },
+  {
+    async onSuccess(context) {
+      if (context.data.twoFactorRedirect) {
+        // Redirect or show the 2FA verification UI
+        router.push("/two-factor");
+      }
+    },
+  }
+);
+```
+
+### Disable 2FA
+
+```ts title="disable-2fa.ts"
+await authClient.twoFactor.disable({
+  password: "user-current-password",
+});
+```
+
+## OTP (email or SMS)
+
+Instead of TOTP, you can send a one-time code via email or phone. Configure `otpOptions.sendOTP` on the server:
+
+```ts title="auth.ts"
+twoFactor({
+  otpOptions: {
+    async sendOTP({ user, otp }, ctx) {
+      await sendEmail({
+        to: user.email,
+        subject: "Your verification code",
+        text: `Your code is: ${otp}`,
+      });
+    },
+  },
+})
+```
+
+### Send an OTP
+
+```ts title="send-otp.ts"
+await authClient.twoFactor.sendOtp();
+```
+
+### Verify an OTP
+
+```ts title="verify-otp.ts"
+const { data, error } = await authClient.twoFactor.verifyOtp({
+  code: "123456",
+  trustDevice: true,
+});
+```
+
+## Backup codes
+
+Backup codes are generated when 2FA is enabled. Each code can only be used once.
+
+### Generate new backup codes
+
+```ts title="generate-backup-codes.ts"
+const { data } = await authClient.twoFactor.generateBackupCodes({
+  password: "user-current-password",
+});
+// data.backupCodes — array of new codes; old codes are deleted
+```
+
+<Warning>
+  Generating new backup codes permanently deletes the old ones.
+</Warning>
+
+### Verify a backup code
+
+```ts title="verify-backup-code.ts"
+const { data, error } = await authClient.twoFactor.verifyBackupCode({
+  code: "backup-code-here",
+  trustDevice: false,
+});
+```
+
+## Trusted devices
+
+Pass `trustDevice: true` when verifying any 2FA method to skip 2FA for 30 days on that device:
+
+```ts title="verify-with-trust.ts"
+await authClient.twoFactor.verifyTotp({
+  code: "123456",
+  trustDevice: true, // user won't be prompted for 2FA again on this device for 30 days
+});
+```
+
+## Configuration options
+
+### Server options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `issuer` | `string` | app name | Issuer name shown in authenticator apps. Overrides `appName`. |
+| `skipVerificationOnEnable` | `boolean` | `false` | Set `true` to mark 2FA enabled without requiring a TOTP verification. |
+| `twoFactorTable` | `string` | `"twoFactor"` | Custom table name for storing 2FA data. |
+| `otpOptions.sendOTP` | `function` | — | Send an OTP code to the user. |
+| `otpOptions.period` | `number` | `3` | OTP validity period in minutes. |
+| `totpOptions.digits` | `number` | `6` | Number of digits in the TOTP code. |
+| `totpOptions.period` | `number` | `30` | TOTP window in seconds. |
+| `backupCodeOptions.amount` | `number` | `10` | Number of backup codes to generate. |
+| `backupCodeOptions.length` | `number` | `10` | Length of each backup code. |
+
+### Client options
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `twoFactorPage` | `string` | URL to redirect users who need to complete 2FA. Causes a full page reload. |
+| `onTwoFactorRedirect` | `function` | Callback for handling the 2FA redirect programmatically. |

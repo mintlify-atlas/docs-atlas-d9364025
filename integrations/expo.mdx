@@ -1,0 +1,371 @@
+---
+title: Expo integration
+description: Integrate Better Auth with Expo for cross-platform React Native and web apps.
+---
+
+Better Auth supports both Expo native (iOS/Android) and web apps. This guide covers setting up a Better Auth backend with Expo API Routes, initialising the client with secure cookie storage, handling social authentication, and managing sessions.
+
+<Note>
+  This guide targets **Expo SDK 55** (React Native 0.83, React 19.2). SDK 55 requires the [New Architecture](https://docs.expo.dev/guides/new-architecture/) — the Legacy Architecture is no longer supported. If you are upgrading from an older SDK, see the [Expo SDK 55 upgrade guide](https://expo.dev/blog/upgrading-to-sdk-55).
+</Note>
+
+## Installation
+
+<Steps>
+  <Step title="Configure a Better Auth backend">
+    Before using Better Auth with Expo, you need a Better Auth backend. You can use a separate server or host your Better Auth instance inside the Expo app using [Expo API Routes](https://docs.expo.dev/router/reference/api-routes).
+
+    To use Expo API Routes, create a catch-all API route and export the handler for both methods:
+
+    ```typescript app/api/auth/[...auth]+api.ts
+    import { auth } from "@/lib/auth";
+
+    const handler = auth.handler;
+    export { handler as GET, handler as POST };
+    ```
+
+    For a standalone server setup, follow the [installation guide](/installation).
+  </Step>
+
+  <Step title="Install server dependencies">
+    Install Better Auth and the Expo server plugin into your server (or Expo) project:
+
+    ```bash
+    npm install better-auth @better-auth/expo
+    ```
+  </Step>
+
+  <Step title="Install client dependencies">
+    Install Better Auth and the Expo client plugin into your Expo application:
+
+    ```bash
+    npm install better-auth @better-auth/expo expo-network expo-secure-store
+    ```
+
+    If you plan to use social providers (Google, Apple, etc.), you also need:
+
+    ```bash
+    npm install expo-linking expo-web-browser expo-constants
+    ```
+  </Step>
+
+  <Step title="Add the Expo plugin on your server">
+    Add the `expo` server plugin to your Better Auth instance:
+
+    ```typescript lib/auth.ts
+    import { betterAuth } from "better-auth";
+    import { expo } from "@better-auth/expo";
+
+    export const auth = betterAuth({
+      plugins: [expo()],
+      emailAndPassword: {
+        enabled: true,
+      },
+    });
+    ```
+  </Step>
+
+  <Step title="Initialise the Better Auth client">
+    Create the auth client with `createAuthClient` from `better-auth/react` and add the `expoClient` plugin. The plugin handles secure cookie storage via `expo-secure-store` and manages OAuth browser sessions.
+
+    ```typescript lib/auth-client.ts
+    import { createAuthClient } from "better-auth/react";
+    import { expoClient } from "@better-auth/expo/client";
+    import * as SecureStore from "expo-secure-store";
+
+    export const authClient = createAuthClient({
+      baseURL: "http://localhost:8081",
+      plugins: [
+        expoClient({
+          scheme: "myapp",
+          storagePrefix: "myapp",
+          storage: SecureStore,
+        }),
+      ],
+    });
+    ```
+
+    <Note>
+      Include the full URL with path if you changed the default `/api/auth` base path.
+    </Note>
+
+    The `expoClient` plugin:
+    - Enables social auth flows by handling OAuth URLs and callbacks in the Expo web browser.
+    - Stores session cookies securely in `expo-secure-store` and appends them to auth request headers automatically.
+  </Step>
+
+  <Step title="Configure scheme and trusted origins">
+    Better Auth uses deep links to redirect users back to your app after OAuth. Add your app scheme to `trustedOrigins` in your auth config.
+
+    First, define the scheme in `app.json`:
+
+    ```json app.json
+    {
+      "expo": {
+        "scheme": "myapp"
+      }
+    }
+    ```
+
+    Then add it to your Better Auth config:
+
+    ```typescript lib/auth.ts
+    export const auth = betterAuth({
+      trustedOrigins: ["myapp://"],
+    });
+    ```
+
+    For development, Expo uses the `exp://` scheme with your device's local IP. You can conditionally allow it:
+
+    ```typescript lib/auth.ts
+    export const auth = betterAuth({
+      trustedOrigins: [
+        "myapp://",
+        ...(process.env.NODE_ENV === "development"
+          ? [
+              "exp://",
+              "exp://**",
+              "exp://192.168.*.*:*/**",
+            ]
+          : []),
+      ],
+    });
+    ```
+
+    <Warning>
+      The `exp://` wildcard patterns should only be used in development. In production, use your app's specific scheme (`myapp://`).
+    </Warning>
+  </Step>
+
+  <Step title="Configure Metro bundler">
+    Better Auth relies on `package.json` exports for module resolution. From **Expo SDK 53+**, package exports are enabled in Metro by default — no extra configuration is needed.
+
+    If you have a custom `metro.config.js`, ensure you are not disabling package exports:
+
+    ```javascript metro.config.js
+    const { getDefaultConfig } = require("expo/metro-config");
+
+    const config = getDefaultConfig(__dirname);
+
+    // Do NOT set this to false — Better Auth requires package exports
+    // config.resolver.unstable_enablePackageExports = false;
+
+    module.exports = config;
+    ```
+
+    Clear the Metro cache after any config change:
+
+    ```bash
+    npx expo start --clear
+    ```
+  </Step>
+</Steps>
+
+## Usage
+
+### Sign-in and sign-up
+
+<Tabs>
+  <Tab title="Sign in">
+    ```tsx app/sign-in.tsx
+    import { useState } from "react";
+    import { View, TextInput, Button } from "react-native";
+    import { authClient } from "@/lib/auth-client";
+
+    export default function SignIn() {
+      const [email, setEmail] = useState("");
+      const [password, setPassword] = useState("");
+
+      const handleLogin = async () => {
+        await authClient.signIn.email({ email, password });
+      };
+
+      return (
+        <View>
+          <TextInput
+            placeholder="Email"
+            value={email}
+            onChangeText={setEmail}
+          />
+          <TextInput
+            placeholder="Password"
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+          />
+          <Button title="Sign in" onPress={handleLogin} />
+        </View>
+      );
+    }
+    ```
+  </Tab>
+  <Tab title="Sign up">
+    ```tsx app/sign-up.tsx
+    import { useState } from "react";
+    import { View, TextInput, Button } from "react-native";
+    import { authClient } from "@/lib/auth-client";
+
+    export default function SignUp() {
+      const [name, setName] = useState("");
+      const [email, setEmail] = useState("");
+      const [password, setPassword] = useState("");
+
+      const handleSignUp = async () => {
+        await authClient.signUp.email({ email, password, name });
+      };
+
+      return (
+        <View>
+          <TextInput placeholder="Name" value={name} onChangeText={setName} />
+          <TextInput
+            placeholder="Email"
+            value={email}
+            onChangeText={setEmail}
+          />
+          <TextInput
+            placeholder="Password"
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+          />
+          <Button title="Sign up" onPress={handleSignUp} />
+        </View>
+      );
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Social sign-in
+
+Pass a relative callback path to `signIn.social`. On native, the Expo plugin automatically converts it to a deep link using `Linking.createURL`.
+
+```tsx app/social-sign-in.tsx
+import { Button } from "react-native";
+import { router } from "expo-router";
+import { authClient } from "@/lib/auth-client";
+
+export default function SocialSignIn() {
+  const handleLogin = async () => {
+    const { error } = await authClient.signIn.social({
+      provider: "google",
+      callbackURL: "/dashboard",
+    });
+
+    if (error) return;
+
+    router.replace("/dashboard");
+  };
+
+  return <Button title="Continue with Google" onPress={handleLogin} />;
+}
+```
+
+<Note>
+  On native (iOS/Android), `signIn.social` does not navigate automatically. Handle navigation yourself after the call resolves. Browser behaviour differs by platform — see the [Expo WebBrowser docs](https://docs.expo.dev/versions/latest/sdk/webbrowser/#webbrowseropenauthsessionasyncurl-redirecturl-options).
+</Note>
+
+### IdToken sign-in
+
+If you obtain an ID token from a native provider SDK, you can verify it server-side with `signIn.social` and the `idToken` option:
+
+```tsx app/social-sign-in.tsx
+await authClient.signIn.social({
+  provider: "google", // google, apple, and facebook are supported
+  idToken: {
+    token: "...",  // ID token from the provider
+    nonce: "...",  // nonce from the provider (optional)
+  },
+  callbackURL: "/dashboard",
+});
+```
+
+### Session
+
+Use the `useSession` hook to access the current user's session reactively. On native, the session is cached in `SecureStore` to avoid a loading spinner on app restart.
+
+```tsx app/index.tsx
+import { Text } from "react-native";
+import { authClient } from "@/lib/auth-client";
+
+export default function Index() {
+  const { data: session } = authClient.useSession();
+
+  return <Text>Welcome, {session?.user.name}</Text>;
+}
+```
+
+### Making authenticated requests
+
+To send authenticated requests from native, retrieve the session cookie from `SecureStore` and attach it manually to your request headers.
+
+```tsx
+import { authClient } from "@/lib/auth-client";
+
+const makeAuthenticatedRequest = async () => {
+  const cookies = authClient.getCookie();
+
+  const response = await fetch("http://localhost:8081/api/secure-endpoint", {
+    headers: { Cookie: cookies },
+    credentials: "omit", // avoid interfering with the manually set cookie header
+  });
+
+  return response.json();
+};
+```
+
+## Client options
+
+### storage
+
+The storage mechanism used to persist session data and cookies. Defaults to `expo-secure-store`.
+
+```typescript lib/auth-client.ts
+import * as SecureStore from "expo-secure-store";
+
+expoClient({
+  storage: SecureStore,
+})
+```
+
+### scheme
+
+The deep link scheme used to redirect back to your app after OAuth. By default, Better Auth reads this from `app.json`. Override it when necessary.
+
+```typescript
+expoClient({
+  scheme: "myapp",
+})
+```
+
+### disableCache
+
+Set to `true` to prevent session data from being cached in `SecureStore`.
+
+```typescript
+expoClient({
+  disableCache: true,
+})
+```
+
+### cookiePrefix
+
+Prefix (or array of prefixes) used to identify Better Auth cookies. Prevents infinite refetching when third-party cookies are present. Defaults to `"better-auth"`.
+
+```typescript
+// Single prefix
+expoClient({
+  storage: SecureStore,
+  cookiePrefix: "better-auth",
+})
+
+// Multiple prefixes
+expoClient({
+  storage: SecureStore,
+  cookiePrefix: ["better-auth", "my-app", "custom-auth"],
+})
+```
+
+<Note>
+  If you use plugins with custom cookie names (e.g. `webAuthnChallengeCookie`), include the corresponding prefix in the `cookiePrefix` array. See the [Passkey plugin docs](/authentication/passkey) for details.
+</Note>

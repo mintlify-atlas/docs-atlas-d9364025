@@ -1,0 +1,465 @@
+---
+title: Basic usage
+description: Sign users up, sign them in, manage sessions, and perform common user operations with Better Auth.
+---
+
+Better Auth provides built-in support for:
+
+- **Email and password**
+- **Social providers** (Google, GitHub, Apple, Discord, and more)
+
+You can also extend these with plugins such as [username](/authentication/username), [magic link](/authentication/magic-link), [passkey](/authentication/passkey), and [email OTP](/authentication/phone-number).
+
+## Email & password
+
+Enable email and password authentication in your auth instance:
+
+```ts auth.ts
+import { betterAuth } from "better-auth";
+
+export const auth = betterAuth({
+  emailAndPassword: {
+    enabled: true,
+  },
+});
+```
+
+### Sign up
+
+Call `signUp.email` on the client with the user's details:
+
+```ts sign-up.ts
+import { authClient } from "@/lib/auth-client";
+
+const { data, error } = await authClient.signUp.email({
+  email,    // user email address
+  password, // minimum 8 characters by default
+  name,     // display name
+  image,    // avatar URL (optional)
+  callbackURL: "/dashboard", // redirect after email verification (optional)
+}, {
+  onRequest: (ctx) => {
+    // show loading state
+  },
+  onSuccess: (ctx) => {
+    // redirect to dashboard or show success message
+  },
+  onError: (ctx) => {
+    alert(ctx.error.message);
+  },
+});
+```
+
+By default, users are automatically signed in after registration. To disable this:
+
+```ts auth.ts
+import { betterAuth } from "better-auth";
+
+export const auth = betterAuth({
+  emailAndPassword: {
+    enabled: true,
+    autoSignIn: false, // defaults to true
+  },
+});
+```
+
+### Sign in
+
+Call `signIn.email` on the client:
+
+```ts sign-in.ts
+import { authClient } from "@/lib/auth-client";
+
+const { data, error } = await authClient.signIn.email({
+  email,
+  password,
+  callbackURL: "/dashboard",
+  /**
+   * Keep the session alive after the browser is closed.
+   * @default true
+   */
+  rememberMe: false,
+}, {
+  // optional callbacks
+});
+```
+
+<Warning>
+  Always call client methods from the client side. Do not call them from the server.
+</Warning>
+
+### Server-side authentication
+
+To authenticate a user from your server, use `auth.api` methods directly:
+
+```ts server.ts
+import { auth } from "./auth";
+
+const response = await auth.api.signInEmail({
+  body: {
+    email,
+    password,
+  },
+  asResponse: true, // returns a Response object instead of data
+});
+```
+
+<Note>
+  If the server cannot return a `Response` object, you'll need to manually parse and set cookies. For Next.js, Better Auth provides [a plugin](/integrations/next#server-action-cookies) to handle this automatically.
+</Note>
+
+## Social sign-on
+
+Better Auth supports Google, GitHub, Apple, Discord, and many more social providers. Configure the providers you need on your auth instance:
+
+```ts auth.ts
+import { betterAuth } from "better-auth";
+
+export const auth = betterAuth({
+  socialProviders: {
+    github: {
+      clientId: process.env.GITHUB_CLIENT_ID!,
+      clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+    },
+  },
+});
+```
+
+### Sign in with a social provider
+
+Call `signIn.social` on the client:
+
+```ts sign-in.ts
+import { authClient } from "@/lib/auth-client";
+
+await authClient.signIn.social({
+  /**
+   * The social provider ID.
+   * @example "github", "google", "apple"
+   */
+  provider: "github",
+  /**
+   * Redirect after the user authenticates with the provider.
+   * @default "/"
+   */
+  callbackURL: "/dashboard",
+  /**
+   * Redirect if an error occurs during sign-in.
+   */
+  errorCallbackURL: "/error",
+  /**
+   * Redirect for newly registered users.
+   */
+  newUserCallbackURL: "/welcome",
+  /**
+   * Disable the automatic redirect to the provider.
+   * @default false
+   */
+  disableRedirect: true,
+});
+```
+
+<Tip>
+  You can also authenticate using an `idToken` or `accessToken` from the social provider instead of redirecting the user. See the [social providers documentation](/authentication/social-providers) for details.
+</Tip>
+
+## Sign out
+
+Call `signOut` on the client:
+
+```ts user-card.tsx
+import { authClient } from "@/lib/auth-client";
+
+await authClient.signOut();
+```
+
+Pass `fetchOptions` to redirect on success:
+
+```ts user-card.tsx
+await authClient.signOut({
+  fetchOptions: {
+    onSuccess: () => {
+      router.push("/login");
+    },
+  },
+});
+```
+
+## Session management
+
+Once a user is signed in, you can access their session data from both the client and server.
+
+### Client side
+
+#### useSession hook
+
+Better Auth provides a `useSession` hook backed by nanostores. It keeps your UI in sync — any change to the session (such as signing out) is reflected immediately.
+
+<Tabs>
+  <Tab title="React">
+    ```tsx user.tsx
+    import { authClient } from "@/lib/auth-client";
+
+    export function User() {
+      const {
+        data: session,
+        isPending, // loading state
+        error,     // error object
+        refetch,   // manually refetch
+      } = authClient.useSession();
+
+      return (
+        // render session data
+      );
+    }
+    ```
+  </Tab>
+  <Tab title="Vue">
+    ```vue index.vue
+    <script setup lang="ts">
+    import { authClient } from "~/lib/auth-client";
+
+    const session = authClient.useSession();
+    </script>
+
+    <template>
+      <div>
+        <pre>{{ session.data }}</pre>
+        <button v-if="session.data" @click="authClient.signOut()">
+          Sign out
+        </button>
+      </div>
+    </template>
+    ```
+  </Tab>
+  <Tab title="Svelte">
+    ```svelte user.svelte
+    <script lang="ts">
+    import { authClient } from "$lib/auth-client";
+
+    const session = authClient.useSession();
+    </script>
+
+    <p>{$session.data?.user.email}</p>
+    ```
+  </Tab>
+  <Tab title="Solid">
+    ```tsx user.tsx
+    import { authClient } from "~/lib/auth-client";
+
+    export default function Home() {
+      const session = authClient.useSession();
+      return (
+        <pre>{JSON.stringify(session(), null, 2)}</pre>
+      );
+    }
+    ```
+  </Tab>
+  <Tab title="Vanilla">
+    ```ts auth-client.ts
+    import { authClient } from "~/lib/auth-client";
+
+    authClient.useSession.subscribe((value) => {
+      // react to session changes
+    });
+    ```
+  </Tab>
+</Tabs>
+
+#### getSession
+
+If you prefer not to use the hook, call `getSession` directly:
+
+```ts
+import { authClient } from "@/lib/auth-client";
+
+const { data: session, error } = await authClient.getSession();
+```
+
+This works with client-side data-fetching libraries like [TanStack Query](https://tanstack.com/query/latest).
+
+### Server side
+
+Pass the incoming request headers to `auth.api.getSession`:
+
+<Tabs>
+  <Tab title="Next.js">
+    ```ts server.ts
+    import { auth } from "./auth";
+    import { headers } from "next/headers";
+
+    const session = await auth.api.getSession({
+      headers: await headers(),
+    });
+    ```
+  </Tab>
+  <Tab title="Nuxt">
+    ```ts server/session.ts
+    import { auth } from "~/utils/auth";
+
+    export default defineEventHandler(async (event) => {
+      const session = await auth.api.getSession({
+        headers: event.headers,
+      });
+    });
+    ```
+  </Tab>
+  <Tab title="SvelteKit">
+    ```ts +page.ts
+    import { auth } from "./auth";
+
+    export async function load({ request }) {
+      const session = await auth.api.getSession({
+        headers: request.headers,
+      });
+      return { props: { session } };
+    }
+    ```
+  </Tab>
+  <Tab title="Astro">
+    ```astro index.astro
+    ---
+    import { auth } from "./auth";
+
+    const session = await auth.api.getSession({
+      headers: Astro.request.headers,
+    });
+    ---
+    ```
+  </Tab>
+  <Tab title="Hono">
+    ```ts index.ts
+    import { auth } from "./auth";
+
+    const app = new Hono();
+
+    app.get("/path", async (c) => {
+      const session = await auth.api.getSession({
+        headers: c.req.raw.headers,
+      });
+    });
+    ```
+  </Tab>
+  <Tab title="TanStack Start">
+    ```ts app/routes/api/index.ts
+    import { auth } from "./auth";
+    import { createAPIFileRoute } from "@tanstack/start/api";
+
+    export const APIRoute = createAPIFileRoute("/api/$")({
+      GET: async ({ request }) => {
+        const session = await auth.api.getSession({
+          headers: request.headers,
+        });
+      },
+    });
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  For more details, see the [session management documentation](/concepts/session-management).
+</Note>
+
+## Using plugins
+
+One of Better Auth's key features is its plugin system — you can add complex auth functionality with just a few lines of code.
+
+Here's an example using the two-factor authentication plugin:
+
+<Steps>
+
+<Step title="Configure the server">
+
+Import the plugin and add it to the `plugins` array in your auth instance:
+
+```ts auth.ts
+import { betterAuth } from "better-auth";
+import { twoFactor } from "better-auth/plugins";
+
+export const auth = betterAuth({
+  // ...rest of your options
+  plugins: [
+    twoFactor(),
+  ],
+});
+```
+
+Better Auth will now expose two-factor routes and methods on the server.
+
+</Step>
+
+<Step title="Migrate the database">
+
+Plugins often require additional tables. Run the CLI to apply the changes:
+
+```bash
+npx auth generate
+```
+
+Or apply the migration directly:
+
+```bash
+npx auth migrate
+```
+
+<Info>
+  To add the schema manually, see the [two-factor plugin documentation](/authentication/two-factor#schema).
+</Info>
+
+</Step>
+
+<Step title="Configure the client">
+
+Add the matching client plugin to your auth client:
+
+```ts auth-client.ts
+import { createAuthClient } from "better-auth/client";
+import { twoFactorClient } from "better-auth/client/plugins";
+
+const authClient = createAuthClient({
+  plugins: [
+    twoFactorClient({
+      twoFactorPage: "/two-factor", // redirect here if 2FA is required
+    }),
+  ],
+});
+```
+
+Two-factor methods are now available on the client:
+
+```ts profile.ts
+import { authClient } from "./auth-client";
+
+const enableTwoFactor = async () => {
+  const data = await authClient.twoFactor.enable({
+    password, // user's current password is required
+  });
+};
+
+const disableTwoFactor = async () => {
+  const data = await authClient.twoFactor.disable({
+    password,
+  });
+};
+
+const verifyTOTP = async () => {
+  const data = await authClient.twoFactor.verifyTOTP({
+    code: "123456", // code entered by the user
+    /**
+     * If trusted, the user won't need to pass 2FA again
+     * on the same device.
+     */
+    trustDevice: true,
+  });
+};
+```
+
+</Step>
+
+<Step title="Next steps">
+
+See the [two-factor plugin documentation](/authentication/two-factor) for the full list of methods and configuration options.
+
+</Step>
+
+</Steps>

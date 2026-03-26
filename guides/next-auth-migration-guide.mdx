@@ -1,0 +1,299 @@
+---
+title: Migrating from NextAuth.js
+description: Step-by-step guide to migrate from Auth.js (NextAuth.js) to Better Auth, including database schema differences and client API changes.
+---
+
+This guide walks through migrating a project from [Auth.js](https://authjs.dev/)
+(formerly NextAuth.js) to Better Auth. The two libraries have different design
+philosophies, so the migration requires some planning.
+
+<Info>
+  If your Auth.js setup is working well there is no urgent need to migrate.
+  Better Auth continues to add features previously exclusive to Auth.js, and we
+  welcome the opportunity to earn your adoption on new or greenfield projects.
+</Info>
+
+<Steps>
+  <Step title="Create the Better Auth instance">
+    Follow the [installation guide](/installation) to add Better Auth to your
+    project. Here is a side-by-side comparison of a minimal GitHub OAuth config:
+
+    <Tabs>
+      <Tab title="Auth.js">
+        ```ts title="auth.ts"
+        import NextAuth from "next-auth";
+        import GitHub from "next-auth/providers/github";
+
+        export const { handlers, signIn, signOut, auth } = NextAuth({
+          providers: [GitHub],
+        });
+        ```
+      </Tab>
+
+      <Tab title="Better Auth">
+        ```ts title="auth.ts"
+        import { betterAuth } from "better-auth";
+
+        export const auth = betterAuth({
+          socialProviders: {
+            github: {
+              clientId: process.env.GITHUB_CLIENT_ID!,
+              clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+            },
+          },
+        });
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Create the client instance">
+    Better Auth ships a separate client package for browser/React usage:
+
+    ```ts title="auth-client.ts"
+    import { createAuthClient } from "better-auth/react";
+
+    export const authClient = createAuthClient();
+    ```
+  </Step>
+
+  <Step title="Update the route handler">
+    Rename `/app/api/auth/[...nextauth]` to `/app/api/auth/[...all]`, then
+    update `route.ts`:
+
+    <Tabs>
+      <Tab title="Auth.js">
+        ```ts title="app/api/auth/[...nextauth]/route.ts"
+        import { handlers } from "@/lib/auth";
+
+        export const { GET, POST } = handlers;
+        ```
+      </Tab>
+
+      <Tab title="Better Auth">
+        ```ts title="app/api/auth/[...all]/route.ts"
+        import { auth } from "@/lib/auth";
+        import { toNextJsHandler } from "better-auth/next-js";
+
+        export const { GET, POST } = toNextJsHandler(auth);
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Migrate client-side session management">
+    ### Sign in
+
+    <Tabs>
+      <Tab title="Auth.js">
+        ```ts
+        "use client";
+        import { signIn } from "next-auth/react";
+
+        signIn("github");
+        ```
+      </Tab>
+
+      <Tab title="Better Auth">
+        ```ts
+        "use client";
+        import { authClient } from "@/lib/auth-client";
+
+        const { data, error } = await authClient.signIn.social({
+          provider: "github",
+        });
+        ```
+      </Tab>
+    </Tabs>
+
+    ### Sign out
+
+    <Tabs>
+      <Tab title="Auth.js">
+        ```ts
+        "use client";
+        import { signOut } from "next-auth/react";
+
+        signOut();
+        ```
+      </Tab>
+
+      <Tab title="Better Auth">
+        ```ts
+        "use client";
+        import { authClient } from "@/lib/auth-client";
+
+        await authClient.signOut();
+        ```
+      </Tab>
+    </Tabs>
+
+    ### Get session (client)
+
+    <Tabs>
+      <Tab title="Auth.js">
+        ```ts
+        "use client";
+        import { useSession } from "next-auth/react";
+
+        const { data, status, update } = useSession();
+        ```
+      </Tab>
+
+      <Tab title="Better Auth">
+        ```ts
+        "use client";
+        import { authClient } from "@/lib/auth-client";
+
+        const { data, error, isPending, refetch } = authClient.useSession();
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Migrate server-side session management">
+    ### Get session (server)
+
+    <Tabs>
+      <Tab title="Auth.js">
+        ```ts
+        import { auth } from "@/lib/auth";
+
+        const session = await auth();
+        ```
+      </Tab>
+
+      <Tab title="Better Auth">
+        ```ts
+        import { auth } from "@/lib/auth";
+        import { headers } from "next/headers";
+
+        const session = await auth.api.getSession({
+          headers: await headers(),
+        });
+        ```
+      </Tab>
+    </Tabs>
+
+    ### Sign out (server)
+
+    <Tabs>
+      <Tab title="Auth.js">
+        ```ts
+        import { signOut } from "@/lib/auth";
+
+        await signOut();
+        ```
+      </Tab>
+
+      <Tab title="Better Auth">
+        ```ts
+        import { auth } from "@/lib/auth";
+        import { headers } from "next/headers";
+
+        await auth.api.signOut({ headers: await headers() });
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Protect routes">
+    Better Auth recommends checking the session on each page or route rather
+    than relying on middleware for full authorization.
+
+    <Tabs>
+      <Tab title="Server component">
+        ```ts title="app/dashboard/page.tsx"
+        import { auth } from "@/lib/auth";
+        import { headers } from "next/headers";
+        import { redirect } from "next/navigation";
+
+        export default async function DashboardPage() {
+          const session = await auth.api.getSession({
+            headers: await headers(),
+          });
+
+          if (!session) redirect("/sign-in");
+
+          return <h1>Welcome {session.user.name}</h1>;
+        }
+        ```
+      </Tab>
+
+      <Tab title="Client component">
+        ```tsx title="app/dashboard/page.tsx"
+        "use client";
+        import { authClient } from "@/lib/auth-client";
+        import { redirect } from "next/navigation";
+
+        export default function DashboardPage() {
+          const { data, isPending } = authClient.useSession();
+
+          if (isPending) return <p>Loading…</p>;
+          if (!data) redirect("/sign-in");
+
+          return <h1>Welcome {data.user.name}</h1>;
+        }
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Migrate the database">
+    If you were using the Auth.js database session strategy you will need to
+    migrate your data. The table below summarises the schema differences.
+
+    ### User table
+
+    | Field | Auth.js | Better Auth |
+    | ----- | ------- | ----------- |
+    | `name` | optional | required |
+    | `email` | optional | required, unique |
+    | `emailVerified` | `Date \| null` | `boolean` |
+    | `createdAt` | — | `Date` |
+    | `updatedAt` | — | `Date` |
+
+    ### Session table
+
+    | Field | Auth.js | Better Auth |
+    | ----- | ------- | ----------- |
+    | `sessionToken` | ✓ | renamed to `token` |
+    | `expires` | `Date` | renamed to `expiresAt` |
+    | `ipAddress` | — | `string \| null` |
+    | `userAgent` | — | `string \| null` |
+    | `createdAt` | — | `Date` |
+    | `updatedAt` | — | `Date` |
+
+    ### Account table
+
+    | Field | Auth.js | Better Auth |
+    | ----- | ------- | ----------- |
+    | `provider` | ✓ | renamed to `providerId` |
+    | `providerAccountId` | ✓ | renamed to `accountId` |
+    | `refresh_token` | snake_case | `refreshToken` (camelCase) |
+    | `access_token` | snake_case | `accessToken` (camelCase) |
+    | `expires_at` | `number` | `accessTokenExpiresAt: Date` |
+    | `type` | ✓ | removed (derived from `providerId`) |
+    | `password` | — | added for credential accounts |
+
+    ### VerificationToken → Verification
+
+    | Field | Auth.js | Better Auth |
+    | ----- | ------- | ----------- |
+    | composite PK (`identifier`, `token`) | ✓ | replaced by `id: string` |
+    | `token` | ✓ | renamed to `value` |
+    | `expires` | `Date` | renamed to `expiresAt` |
+    | `createdAt` | — | `Date` |
+    | `updatedAt` | — | `Date` |
+  </Step>
+</Steps>
+
+---
+
+## Wrapping up
+
+For a full implementation example see the
+[Next.js demo app](https://github.com/better-auth/better-auth/tree/canary/demo/nextjs).
+
+Need help? Join the [community](https://discord.gg/better-auth) or email
+[contact@better-auth.com](mailto:contact@better-auth.com).

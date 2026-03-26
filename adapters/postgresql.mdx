@@ -1,0 +1,177 @@
+---
+title: PostgreSQL
+description: Connect Better Auth to PostgreSQL using a connection pool or the Kysely adapter.
+---
+
+PostgreSQL is a powerful open-source relational database. Better Auth uses [Kysely](https://kysely.dev/) under the hood for PostgreSQL, which means any database Kysely supports is also supported.
+
+## Installation
+
+<Steps>
+  <Step title="Install the pg driver">
+    <Tabs>
+      <Tab title="npm">
+        ```bash
+        npm install pg
+        npm install --save-dev @types/pg
+        ```
+      </Tab>
+      <Tab title="pnpm">
+        ```bash
+        pnpm add pg
+        pnpm add -D @types/pg
+        ```
+      </Tab>
+      <Tab title="yarn">
+        ```bash
+        yarn add pg
+        yarn add --dev @types/pg
+        ```
+      </Tab>
+      <Tab title="bun">
+        ```bash
+        bun add pg
+        bun add -d @types/pg
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+  <Step title="Configure Better Auth">
+
+    Pass a `pg.Pool` instance directly to the `database` option:
+
+    ```typescript title="auth.ts"
+    import { betterAuth } from "better-auth";
+    import { Pool } from "pg";
+
+    export const auth = betterAuth({
+      database: new Pool({
+        connectionString: process.env.DATABASE_URL,
+      }),
+    });
+    ```
+
+  </Step>
+</Steps>
+
+## Schema generation and migration
+
+The Better Auth CLI can both generate the schema and apply migrations directly against your PostgreSQL database.
+
+<Tabs>
+  <Tab title="migrate">
+    ```bash
+    npx auth@latest migrate
+    ```
+  </Tab>
+  <Tab title="generate">
+    ```bash
+    npx auth@latest generate
+    ```
+  </Tab>
+</Tabs>
+
+| Command | Supported |
+| --- | --- |
+| `npx auth@latest generate` | Yes |
+| `npx auth@latest migrate` | Yes |
+
+## Connection pooling
+
+Use `pg.Pool` (not `pg.Client`) so that Better Auth can reuse connections across requests. Configure pool size based on your workload:
+
+```typescript title="auth.ts"
+import { betterAuth } from "better-auth";
+import { Pool } from "pg";
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: 20,           // maximum number of clients in the pool
+  idleTimeoutMillis: 30_000,  // close idle clients after 30 seconds
+  connectionTimeoutMillis: 2_000, // return an error after 2 seconds if no connection is available
+});
+
+export const auth = betterAuth({
+  database: pool,
+});
+```
+
+<Tip>
+  For serverless deployments, consider using a connection pooler such as PgBouncer or Neon's pooled connection string to avoid exhausting database connections.
+</Tip>
+
+## Using a non-default schema
+
+By default Better Auth creates tables in the `public` schema. To use a different schema (e.g. `auth`), you have three options.
+
+### Option 1: Set search_path in the connection string (recommended)
+
+```typescript title="auth.ts"
+import { betterAuth } from "better-auth";
+import { Pool } from "pg";
+
+export const auth = betterAuth({
+  database: new Pool({
+    connectionString:
+      "postgres://user:password@localhost:5432/mydb?options=-c search_path=auth",
+  }),
+});
+```
+
+URL-encode the parameter if needed: `?options=-c%20search_path%3Dauth`.
+
+### Option 2: Set search_path in Pool options
+
+```typescript title="auth.ts"
+import { betterAuth } from "better-auth";
+import { Pool } from "pg";
+
+export const auth = betterAuth({
+  database: new Pool({
+    host: "localhost",
+    port: 5432,
+    user: "postgres",
+    password: "password",
+    database: "mydb",
+    options: "-c search_path=auth",
+  }),
+});
+```
+
+### Option 3: Set the default schema for the database user
+
+```sql
+ALTER USER your_user SET search_path TO auth;
+```
+
+Reconnect after running this command for the change to take effect.
+
+### Prerequisites for a non-default schema
+
+Before using a custom schema, make sure it exists and your user has the necessary permissions:
+
+```sql
+CREATE SCHEMA IF NOT EXISTS auth;
+
+GRANT ALL PRIVILEGES ON SCHEMA auth TO your_user;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA auth TO your_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA auth GRANT ALL ON TABLES TO your_user;
+```
+
+<Note>
+  When running `npx auth migrate`, the CLI automatically detects your configured `search_path` and creates tables in the correct schema. Tables in other schemas are ignored.
+</Note>
+
+## Experimental joins
+
+Enabling joins allows Better Auth to use SQL `JOIN` clauses to fetch related data in a single query instead of multiple round-trips. Endpoints such as `/get-session` and `/get-full-organization` see 2-3x latency improvements with high-latency databases.
+
+```typescript title="auth.ts"
+export const auth = betterAuth({
+  experimental: { joins: true },
+});
+```
+
+<Warning>
+  You may need to run migrations after enabling joins.
+</Warning>

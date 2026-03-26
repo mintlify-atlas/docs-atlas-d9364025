@@ -1,0 +1,360 @@
+---
+title: Client
+description: Set up the Better Auth client for React, Vue, Svelte, Solid, or vanilla TypeScript. Learn about hooks, fetch options, error handling, and client plugins.
+---
+
+Better Auth provides a client library for popular frontend frameworks. All framework clients are built on top of a shared core, so methods and hooks are consistent everywhere.
+
+## Installation
+
+```bash
+npm install better-auth
+```
+
+## Create a client instance
+
+Import `createAuthClient` from the package matching your framework. Pass the base URL of your auth server — if the client and server share the same domain, you can omit this.
+
+<Tabs>
+  <Tab title="React">
+    ```typescript title="lib/auth-client.ts"
+    import { createAuthClient } from "better-auth/react";
+
+    export const authClient = createAuthClient({
+      baseURL: "http://localhost:3000",
+    });
+    ```
+  </Tab>
+  <Tab title="Vue">
+    ```typescript title="lib/auth-client.ts"
+    import { createAuthClient } from "better-auth/vue";
+
+    export const authClient = createAuthClient({
+      baseURL: "http://localhost:3000",
+    });
+    ```
+  </Tab>
+  <Tab title="Svelte">
+    ```typescript title="lib/auth-client.ts"
+    import { createAuthClient } from "better-auth/svelte";
+
+    export const authClient = createAuthClient({
+      baseURL: "http://localhost:3000",
+    });
+    ```
+  </Tab>
+  <Tab title="Solid">
+    ```typescript title="lib/auth-client.ts"
+    import { createAuthClient } from "better-auth/solid";
+
+    export const authClient = createAuthClient({
+      baseURL: "http://localhost:3000",
+    });
+    ```
+  </Tab>
+  <Tab title="Vanilla">
+    ```typescript title="lib/auth-client.ts"
+    import { createAuthClient } from "better-auth/client";
+
+    export const authClient = createAuthClient({
+      baseURL: "http://localhost:3000",
+    });
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+If your auth server uses a base path other than `/api/auth`, pass the full URL including the path (e.g., `http://localhost:3000/custom-path/auth`), or use the `basePath` option.
+</Note>
+
+## Usage
+
+The client exposes a set of functions by default that can be extended with plugins.
+
+```typescript title="auth-client.ts"
+import { createAuthClient } from "better-auth/client";
+
+const authClient = createAuthClient();
+
+await authClient.signIn.email({
+  email: "test@user.com",
+  password: "password1234",
+});
+```
+
+## Hooks
+
+Framework-specific clients provide reactive hooks. All hooks are available on the root client object and start with `use`.
+
+### `useSession`
+
+<Tabs>
+  <Tab title="React">
+    ```tsx title="user.tsx"
+    import { createAuthClient } from "better-auth/react";
+
+    const { useSession } = createAuthClient();
+
+    export function User() {
+      const {
+        data: session,
+        isPending,
+        error,
+        refetch,
+      } = useSession();
+
+      return <>{/* ... */}</>;
+    }
+    ```
+  </Tab>
+  <Tab title="Vue">
+    ```vue title="user.vue"
+    <script lang="ts" setup>
+    import { authClient } from '@/lib/auth-client';
+
+    const session = authClient.useSession();
+    </script>
+
+    <template>
+      <div>
+        <button v-if="!session.data" @click="() => authClient.signIn.social({ provider: 'github' })">
+          Continue with GitHub
+        </button>
+        <div>
+          <pre>{{ session.data }}</pre>
+          <button v-if="session.data" @click="authClient.signOut()">
+            Sign out
+          </button>
+        </div>
+      </div>
+    </template>
+    ```
+  </Tab>
+  <Tab title="Svelte">
+    ```svelte title="user.svelte"
+    <script lang="ts">
+    import { authClient } from "$lib/auth-client";
+
+    const session = authClient.useSession();
+    </script>
+
+    <div>
+      {#if $session.data}
+        <p>{$session.data.user.name}</p>
+        <p>{$session.data.user.email}</p>
+        <button onclick={async () => { await authClient.signOut(); }}>
+          Sign out
+        </button>
+      {:else}
+        <button onclick={async () => { await authClient.signIn.social({ provider: "github" }); }}>
+          Continue with GitHub
+        </button>
+      {/if}
+    </div>
+    ```
+  </Tab>
+  <Tab title="Solid">
+    ```tsx title="user.tsx"
+    import { authClient } from "~/lib/auth-client";
+    import { Show } from "solid-js";
+
+    export default function Home() {
+      const session = authClient.useSession();
+      return (
+        <Show when={session()} fallback={<button onClick={toggle}>Log in</button>}>
+          <button onClick={toggle}>Log out</button>
+        </Show>
+      );
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Fetch options
+
+The client uses [Better Fetch](https://better-fetch.vercel.app) — a typed fetch wrapper built by the same team. Pass default fetch options when creating the client:
+
+```typescript title="auth-client.ts"
+import { createAuthClient } from "better-auth/client";
+
+const authClient = createAuthClient({
+  fetchOptions: {
+    // any better-fetch options
+  },
+});
+```
+
+You can also pass fetch options per call:
+
+```typescript
+await authClient.signIn.email(
+  {
+    email: "email@email.com",
+    password: "password1234",
+  },
+  {
+    onSuccess(ctx) {
+      // handle success
+    },
+  }
+);
+
+// or inline
+await authClient.signIn.email({
+  email: "email@email.com",
+  password: "password1234",
+  fetchOptions: {
+    onSuccess(ctx) {
+      // handle success
+    },
+  },
+});
+```
+
+### Session options
+
+Configure how the client fetches and revalidates sessions:
+
+```typescript title="auth-client.ts"
+const authClient = createAuthClient({
+  sessionOptions: {
+    refetchInterval: 0,        // polling interval in seconds (0 = disabled)
+    refetchOnWindowFocus: true, // refetch when the user returns to the tab
+    refetchWhenOffline: false,  // skip refetch when offline
+  },
+});
+```
+
+### Disabling default fetch plugins
+
+The client includes a redirect plugin for browser environments. Disable it for non-browser environments (e.g., React Native):
+
+```typescript title="auth-client.ts"
+const authClient = createAuthClient({
+  disableDefaultFetchPlugins: true,
+});
+```
+
+### Disabling hook rerenders
+
+Some endpoints trigger atom signals that cause hooks like `useSession` to rerender. Suppress this for calls that should not update the UI:
+
+```typescript
+await authClient.updateUser(
+  { name: "New Name" },
+  { disableSignal: true }
+);
+```
+
+If you suppress the signal but still want to update the UI, manually refetch:
+
+```typescript
+const { refetch } = authClient.useSession();
+
+await authClient.updateUser(
+  { name: "New Name" },
+  {
+    disableSignal: true,
+    onSuccess() {
+      refetch();
+    },
+  }
+);
+```
+
+## Error handling
+
+Most client functions return a `{ data, error }` object:
+
+```typescript
+const { data, error } = await authClient.signIn.email({
+  email: "email@email.com",
+  password: "password1234",
+});
+
+if (error) {
+  console.log(error.message);    // "Invalid email or password"
+  console.log(error.status);     // HTTP status code
+  console.log(error.statusText); // HTTP status text
+}
+```
+
+Or pass an `onError` callback:
+
+```typescript
+await authClient.signIn.email({
+  email: "email@email.com",
+  password: "password1234",
+}, {
+  onError(ctx) {
+    console.log(ctx.error.message);
+  },
+});
+```
+
+Hooks like `useSession` also expose `error` and `isPending`:
+
+```typescript
+const { data, error, isPending } = useSession();
+```
+
+### Error codes
+
+The client exposes `$ERROR_CODES` — a typed map of all server error codes. Use it to build localized error messages:
+
+```typescript title="auth-client.ts"
+const authClient = createAuthClient();
+
+type ErrorTypes = Partial<
+  Record<
+    keyof typeof authClient.$ERROR_CODES,
+    { en: string; es: string }
+  >
+>;
+
+const errorCodes = {
+  USER_ALREADY_EXISTS: {
+    en: "user already registered",
+    es: "usuario ya registrado",
+  },
+} satisfies ErrorTypes;
+
+const getErrorMessage = (code: string, lang: "en" | "es") => {
+  if (code in errorCodes) {
+    return errorCodes[code as keyof typeof errorCodes][lang];
+  }
+  return "";
+};
+
+const { error } = await authClient.signUp.email({
+  email: "user@email.com",
+  password: "password",
+  name: "User",
+});
+
+if (error?.code) {
+  alert(getErrorMessage(error.code, "en"));
+}
+```
+
+## Client plugins
+
+Extend the client with plugins to add new methods or modify existing behavior:
+
+```typescript title="auth-client.ts"
+import { createAuthClient } from "better-auth/client";
+import { magicLinkClient } from "better-auth/client/plugins";
+
+const authClient = createAuthClient({
+  plugins: [
+    magicLinkClient(),
+  ],
+});
+
+// use the plugin's methods
+await authClient.signIn.magicLink({
+  email: "test@email.com",
+});
+```
+
+See the [Plugins documentation](/concepts/plugins) for how to create your own client plugins.

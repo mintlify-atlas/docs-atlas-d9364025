@@ -1,0 +1,193 @@
+---
+title: Passkey
+description: Passwordless authentication with WebAuthn passkeys using biometrics, PINs, or security keys.
+---
+
+Passkeys are a secure, passwordless authentication method based on WebAuthn and FIDO2 standards. Users authenticate using biometrics (fingerprint, Face ID), a device PIN, or a hardware security key — no password required.
+
+The passkey plugin is powered by [SimpleWebAuthn](https://simplewebauthn.dev/) under the hood.
+
+## Installation
+
+<Steps>
+  <Step title="Install the package">
+    ```bash
+    npm install @better-auth/passkey
+    ```
+  </Step>
+
+  <Step title="Add the server plugin">
+    Import `passkey` from `@better-auth/passkey` and add it to your plugins list:
+
+    ```ts title="auth.ts"
+    import { betterAuth } from "better-auth";
+    import { passkey } from "@better-auth/passkey";
+
+    export const auth = betterAuth({
+      plugins: [
+        passkey(),
+      ],
+    });
+    ```
+  </Step>
+
+  <Step title="Run the database migration">
+    The passkey plugin needs a `passkey` table in your database:
+
+    <Tabs>
+      <Tab title="migrate">
+        ```bash
+        npx auth migrate
+        ```
+      </Tab>
+      <Tab title="generate">
+        ```bash
+        npx auth generate
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Add the client plugin">
+    Import `passkeyClient` from `@better-auth/passkey/client`:
+
+    ```ts title="auth-client.ts"
+    import { createAuthClient } from "better-auth/client";
+    import { passkeyClient } from "@better-auth/passkey/client";
+
+    export const authClient = createAuthClient({
+      plugins: [
+        passkeyClient(),
+      ],
+    });
+    ```
+  </Step>
+</Steps>
+
+## Usage
+
+### Register a passkey
+
+A user must be signed in before they can register a passkey. Call `passkey.addPasskey`:
+
+```ts title="register-passkey.ts"
+import { authClient } from "@/lib/auth-client";
+
+const { data, error } = await authClient.passkey.addPasskey({
+  name: "My MacBook",                  // optional label for this passkey
+  authenticatorAttachment: "platform", // "platform" or "cross-platform"
+});
+```
+
+### Sign in with a passkey
+
+Call `signIn.passkey` to prompt the user to authenticate:
+
+```ts title="sign-in.ts"
+import { authClient } from "@/lib/auth-client";
+
+await authClient.signIn.passkey({
+  fetchOptions: {
+    onSuccess(context) {
+      window.location.href = "/dashboard";
+    },
+    onError(context) {
+      console.error("Authentication failed:", context.error.message);
+    },
+  },
+});
+```
+
+### Browser autofill (Conditional UI)
+
+Conditional UI lets the browser automatically suggest passkeys in input fields. Two things are required:
+
+<Steps>
+  <Step title="Add autocomplete attributes to inputs">
+    Add `webauthn` as the last value of the `autocomplete` attribute on your input fields:
+
+    ```html
+    <input type="text" name="username" autocomplete="username webauthn" />
+    <input type="password" name="password" autocomplete="current-password webauthn" />
+    ```
+  </Step>
+
+  <Step title="Call signIn.passkey with autoFill on mount">
+    ```tsx title="sign-in.tsx"
+    import { useEffect } from "react";
+    import { authClient } from "@/lib/auth-client";
+
+    useEffect(() => {
+      if (
+        !PublicKeyCredential.isConditionalMediationAvailable ||
+        !PublicKeyCredential.isConditionalMediationAvailable()
+      ) {
+        return;
+      }
+      void authClient.signIn.passkey({ autoFill: true });
+    }, []);
+    ```
+  </Step>
+</Steps>
+
+### List passkeys
+
+```ts title="list-passkeys.ts"
+const { data: passkeys, error } = await authClient.passkey.listUserPasskeys();
+```
+
+### Delete a passkey
+
+```ts title="delete-passkey.ts"
+await authClient.passkey.deletePasskey({
+  id: "passkey-id",
+});
+```
+
+### Update a passkey name
+
+```ts title="update-passkey.ts"
+await authClient.passkey.updatePasskey({
+  id: "passkey-id",
+  name: "Work laptop",
+});
+```
+
+## Relying party configuration
+
+Configure the relying party (RP) options in the `passkey()` plugin:
+
+```ts title="auth.ts"
+import { betterAuth } from "better-auth";
+import { passkey } from "@better-auth/passkey";
+
+export const auth = betterAuth({
+  plugins: [
+    passkey({
+      rpID: "example.com",      // your domain (no protocol, no path)
+      rpName: "My App",          // human-readable name shown in browser UI
+      origin: "https://example.com", // full origin URL, no trailing slash
+      authenticatorSelection: {
+        authenticatorAttachment: "platform", // "platform" | "cross-platform"
+        residentKey: "preferred",            // "required" | "preferred" | "discouraged"
+        userVerification: "preferred",       // "required" | "preferred" | "discouraged"
+      },
+    }),
+  ],
+});
+```
+
+| Option | Description |
+|--------|-------------|
+| `rpID` | Unique identifier for your site, based on the domain. `localhost` is valid for local development. |
+| `rpName` | Human-readable app name displayed in browser and OS prompts. |
+| `origin` | The origin URL where Better Auth is hosted. No trailing slash. |
+| `authenticatorSelection` | WebAuthn authenticator selection criteria. |
+
+<Note>
+  During local development you can omit `rpID`, `rpName`, and `origin`. Better Auth defaults to `localhost`.
+</Note>
+
+## Debugging
+
+To test passkey registration and sign-in without a physical device, use [Chrome's emulated authenticators](https://developer.chrome.com/docs/devtools/webauthn) in DevTools.

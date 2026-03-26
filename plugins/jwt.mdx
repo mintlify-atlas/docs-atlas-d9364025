@@ -1,0 +1,298 @@
+---
+title: JWT
+description: Issue JSON Web Tokens and verify them with a JWKS endpoint for service-to-service authentication.
+---
+
+The JWT plugin provides endpoints to retrieve a JWT token and a JWKS endpoint for token verification. It is intended for service-to-service authentication and APIs that require JWT tokens rather than session cookies.
+
+<Note>
+  This plugin is not a replacement for sessions. For API requests that need to read session tokens as Bearer tokens, the Bearer plugin handles that use case.
+</Note>
+
+## Installation
+
+<Steps>
+  <Step>
+    ### Add the plugin to your auth config
+
+    ```ts title="auth.ts"
+    import { betterAuth } from "better-auth"
+    import { jwt } from "better-auth/plugins"
+
+    export const auth = betterAuth({
+      plugins: [
+        jwt()
+      ]
+    })
+    ```
+  </Step>
+
+  <Step>
+    ### Migrate the database
+
+    Run the migration or generate the schema to add the JWKS table.
+
+    <Tabs>
+      <Tab title="migrate">
+        ```bash
+        npx auth migrate
+        ```
+      </Tab>
+      <Tab title="generate">
+        ```bash
+        npx auth generate
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step>
+    ### Add the client plugin
+
+    ```ts title="auth-client.ts"
+    import { createAuthClient } from "better-auth/client"
+    import { jwtClient } from "better-auth/client/plugins"
+
+    export const authClient = createAuthClient({
+      plugins: [
+        jwtClient()
+      ]
+    })
+    ```
+  </Step>
+</Steps>
+
+## Get a JWT token
+
+### Using the client plugin (recommended)
+
+```ts
+import { authClient } from "@/lib/auth-client"
+
+const { data, error } = await authClient.token()
+if (data) {
+  const jwtToken = data.token
+  // Pass to external services in Authorization: Bearer <token>
+}
+```
+
+### From the set-auth-jwt header
+
+When you call `getSession`, a JWT is returned in the `set-auth-jwt` response header:
+
+```ts
+await authClient.getSession({
+  fetchOptions: {
+    onSuccess: (ctx) => {
+      const jwt = ctx.response.headers.get("set-auth-jwt")
+    },
+  },
+})
+```
+
+### Direct HTTP request
+
+```ts
+await fetch("/api/auth/token", {
+  headers: {
+    Authorization: `Bearer ${sessionToken}`,
+  },
+})
+// Returns: { "token": "ey..." }
+```
+
+## JWKS endpoint
+
+The JWKS endpoint is available at `/api/auth/jwks` and publishes the public key used to sign tokens.
+
+```json
+{
+  "keys": [
+    {
+      "crv": "Ed25519",
+      "x": "bDHiLTt7u-VIU7rfmcltcFhaHKLVvWFy-_csKZARUEU",
+      "kty": "OKP",
+      "kid": "c5c7995d-0037-4553-8aee-b5b620b89b23"
+    }
+  ]
+}
+```
+
+The public key can be cached indefinitely. When a JWT with a different `kid` is received, fetch the JWKS again.
+
+## Verifying tokens
+
+### With remote JWKS (recommended)
+
+```ts
+import { jwtVerify, createRemoteJWKSet } from "jose"
+
+async function validateToken(token: string) {
+  const JWKS = createRemoteJWKSet(
+    new URL("https://your-domain.com/api/auth/jwks")
+  )
+  const { payload } = await jwtVerify(token, JWKS, {
+    issuer: "https://your-domain.com",
+    audience: "https://your-domain.com",
+  })
+  return payload
+}
+```
+
+### With local JWKS
+
+```ts
+import { jwtVerify, createLocalJWKSet } from "jose"
+
+const storedJWKS = {
+  keys: [{ /* keys fetched from /api/auth/jwks */ }],
+}
+
+async function validateToken(token: string) {
+  const JWKS = createLocalJWKSet({ keys: storedJWKS.keys })
+  const { payload } = await jwtVerify(token, JWKS, {
+    issuer: "https://your-domain.com",
+    audience: "https://your-domain.com",
+  })
+  return payload
+}
+```
+
+## Configuration
+
+### Signing algorithm
+
+The default algorithm is `EdDSA` with the `Ed25519` curve. Other supported algorithms:
+
+```ts
+jwt({
+  jwks: {
+    keyPairConfig: { alg: "EdDSA", crv: "Ed25519" }, // default
+    // keyPairConfig: { alg: "ES256" },
+    // keyPairConfig: { alg: "RSA256", modulusLength: 2048 },
+    // keyPairConfig: { alg: "PS256" },
+    // keyPairConfig: { alg: "ES512" },
+  },
+})
+```
+
+### Customize the JWT payload
+
+By default the full user object is added to the JWT payload. Restrict it:
+
+```ts title="auth.ts"
+jwt({
+  jwt: {
+    definePayload: ({ user }) => ({
+      id: user.id,
+      email: user.email,
+      role: user.role,
+    }),
+  },
+})
+```
+
+### Issuer, audience, and expiration
+
+```ts title="auth.ts"
+jwt({
+  jwt: {
+    issuer: "https://example.com",
+    audience: "https://example.com",
+    expirationTime: "1h",     // default is 15 minutes
+    getSubject: (session) => session.user.email, // default is user id
+  },
+})
+```
+
+### Key rotation
+
+```ts title="auth.ts"
+jwt({
+  jwks: {
+    rotationInterval: 60 * 60 * 24 * 30, // rotate every 30 days
+    gracePeriod: 60 * 60 * 24 * 30,      // keep old key valid for 30 days
+  },
+})
+```
+
+### Custom JWKS path
+
+```ts title="auth.ts"
+jwt({
+  jwks: {
+    jwksPath: "/.well-known/jwks.json",
+  },
+})
+```
+
+When using a custom path, configure the client to match:
+
+```ts title="auth-client.ts"
+jwtClient({
+  jwks: {
+    jwksPath: "/.well-known/jwks.json",
+  },
+})
+```
+
+### Remote JWKS URL
+
+Disables the local `/jwks` endpoint and uses an external URL instead:
+
+```ts title="auth.ts"
+jwt({
+  jwks: {
+    remoteUrl: "https://example.com/.well-known/jwks.json",
+    keyPairConfig: { alg: "ES256" }, // required when using remoteUrl
+  },
+})
+```
+
+### Custom adapter
+
+Store JWKS in a location other than your primary database (e.g., Redis):
+
+```ts title="auth.ts"
+jwt({
+  adapter: {
+    getJwks: async (ctx) => {
+      return await yourStorage.getAllKeys()
+    },
+    createJwk: async (ctx, webKey) => {
+      return await yourStorage.createKey(webKey)
+    },
+  },
+})
+```
+
+### OAuth provider mode
+
+If you are using the OIDC or OAuth provider plugins alongside JWT, disable the conflicting `/token` endpoint:
+
+```ts title="auth.ts"
+betterAuth({
+  disabledPaths: ["/token"],
+  plugins: [
+    jwt({
+      disableSettingJwtHeader: true,
+    }),
+  ],
+})
+```
+
+## Schema
+
+The JWT plugin adds a `jwks` table to the database:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `string` | Unique identifier for the key pair |
+| `publicKey` | `string` | The public part of the key |
+| `privateKey` | `string` | The private part of the key (AES256 encrypted by default) |
+| `createdAt` | `Date` | When the key was created |
+| `expiresAt` | `Date` | When the key expires (optional) |
+
+<Note>
+  Private keys are encrypted with AES256 GCM by default. To disable encryption (not recommended): `jwt({ jwks: { disablePrivateKeyEncryption: true } })`
+</Note>

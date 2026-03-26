@@ -1,0 +1,121 @@
+---
+title: MongoDB
+description: Connect Better Auth to MongoDB using the official MongoDB adapter.
+---
+
+MongoDB is a document-oriented NoSQL database. Better Auth provides a first-class MongoDB adapter that maps auth collections to MongoDB documents.
+
+## Installation
+
+<Steps>
+  <Step title="Install the MongoDB driver">
+
+    <Tabs>
+      <Tab title="npm">
+        ```bash
+        npm install mongodb
+        ```
+      </Tab>
+      <Tab title="pnpm">
+        ```bash
+        pnpm add mongodb
+        ```
+      </Tab>
+      <Tab title="yarn">
+        ```bash
+        yarn add mongodb
+        ```
+      </Tab>
+      <Tab title="bun">
+        ```bash
+        bun add mongodb
+        ```
+      </Tab>
+    </Tabs>
+
+  </Step>
+  <Step title="Configure the adapter">
+
+    Import `mongodbAdapter` from `better-auth/adapters/mongodb`. Pass a `Db` instance and, optionally, the `MongoClient` to enable transactions:
+
+    ```typescript title="auth.ts"
+    import { betterAuth } from "better-auth";
+    import { MongoClient } from "mongodb";
+    import { mongodbAdapter } from "better-auth/adapters/mongodb";
+
+    const client = new MongoClient("mongodb://localhost:27017/mydb");
+    const db = client.db();
+
+    export const auth = betterAuth({
+      database: mongodbAdapter(db, {
+        // Passing the client enables database transactions.
+        // Omit it if your MongoDB instance does not support
+        // replica sets (e.g. a plain standalone server).
+        client,
+      }),
+    });
+    ```
+
+  </Step>
+</Steps>
+
+## Configuration options
+
+The `mongodbAdapter` function accepts a `Db` instance and an optional config object:
+
+| Option | Type | Description |
+| --- | --- | --- |
+| `client` | `MongoClient` | Provide the client to enable multi-document transactions. Omit for standalone MongoDB instances that lack replica sets. |
+| `usePlural` | `boolean` | Use plural collection names (e.g. `users` instead of `user`). Defaults to `false`. |
+| `debugLogs` | `boolean` | Enable verbose adapter logging. Defaults to `false`. |
+| `transaction` | `boolean` | Wrap multi-step operations in a MongoDB session transaction. Defaults to `true` when a `client` is provided. |
+
+<Warning>
+  Transactions require a MongoDB replica set. If you are running a standalone MongoDB server without a replica set, you must set `transaction: false` explicitly.
+</Warning>
+
+## Schema and migrations
+
+MongoDB is schemaless — Better Auth creates collections automatically as data is written. There is no `generate` or `migrate` step required.
+
+<Note>
+  Better Auth uses the following collection names by default: `user`, `session`, `account`, and `verification`. Collection names match the model names defined in your auth config.
+</Note>
+
+## Indexes
+
+MongoDB does not enforce uniqueness or index constraints automatically. For optimal performance and data integrity, create the following indexes:
+
+```javascript
+// Unique index on user email
+db.user.createIndex({ email: 1 }, { unique: true });
+
+// Unique index on session token
+db.session.createIndex({ token: 1 }, { unique: true });
+
+// Index for looking up sessions by userId
+db.session.createIndex({ userId: 1 });
+
+// Index for looking up accounts by userId
+db.account.createIndex({ userId: 1 });
+
+// TTL index to automatically expire sessions
+db.session.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+
+// Index for verification lookups
+db.verification.createIndex({ identifier: 1 });
+```
+
+<Tip>
+  Use the TTL index on `session.expiresAt` to have MongoDB automatically remove expired sessions without a background job.
+</Tip>
+
+## Experimental joins
+
+Enabling joins allows Better Auth to use MongoDB `$lookup` aggregations to fetch related data in a single query instead of multiple round-trips.
+
+```typescript title="auth.ts"
+export const auth = betterAuth({
+  experimental: { joins: true },
+});
+```

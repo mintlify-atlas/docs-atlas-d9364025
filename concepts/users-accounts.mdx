@@ -1,0 +1,414 @@
+---
+title: Users and accounts
+description: Manage users and accounts in Better Auth — update user info, change emails and passwords, delete users, link and unlink OAuth accounts, and control token encryption.
+---
+
+Better Auth provides a set of methods for managing users beyond authentication. This includes updating user information, changing passwords, deleting users, and managing OAuth account connections.
+
+The `user` table stores authentication data. See the [database schema](/concepts/database#user-table) for the full field list. You can extend the user schema with [additional fields](/concepts/database#extending-the-core-schema) or use plugins.
+
+## Updating users
+
+### Update user information
+
+Update a user's `name` or `image` using the `updateUser` function:
+
+```typescript
+import { authClient } from "@/lib/auth-client";
+
+await authClient.updateUser({
+  image: "https://example.com/image.jpg",
+  name: "John Doe",
+});
+```
+
+### Change email
+
+Email change is disabled by default. Enable it by setting `changeEmail.enabled` to `true` and providing a `sendVerificationEmail` function:
+
+```typescript title="auth.ts"
+import { betterAuth } from "better-auth";
+import { sendEmail } from "./email";
+
+export const auth = betterAuth({
+  user: {
+    changeEmail: {
+      enabled: true,
+    },
+  },
+  emailVerification: {
+    sendVerificationEmail: async ({ user, url, token }) => {
+      void sendEmail({ to: user.email });
+    },
+  },
+});
+```
+
+<Warning>
+Avoid awaiting the email sending to prevent timing attacks. On serverless platforms, use `waitUntil` or a similar mechanism to ensure the email is sent.
+</Warning>
+
+By default, a verification email is sent to the **new** email address. The email is only updated after the user verifies it.
+
+#### Require confirmation from the current email
+
+For added security, require users to approve the change from their current email before the verification link is sent to the new address:
+
+```typescript title="auth.ts"
+export const auth = betterAuth({
+  user: {
+    changeEmail: {
+      enabled: true,
+      sendChangeEmailConfirmation: async ({ user, newEmail, url, token }, request) => {
+        void sendEmail({
+          to: user.email, // current email
+          subject: "Approve email change",
+          text: `Click the link to approve the change to ${newEmail}: ${url}`,
+        });
+      },
+    },
+  },
+});
+```
+
+#### Allow change without verification
+
+If the user's current email is not verified and you want to allow immediate updates without verification:
+
+```typescript title="auth.ts"
+export const auth = betterAuth({
+  user: {
+    changeEmail: {
+      enabled: true,
+      updateEmailWithoutVerification: true,
+    },
+  },
+});
+```
+
+#### Client usage
+
+```typescript
+import { authClient } from "@/lib/auth-client";
+
+await authClient.changeEmail({
+  newEmail: "new-email@example.com",
+  callbackURL: "/dashboard",
+});
+```
+
+### Change password
+
+Passwords are stored in the `account` table, not the `user` table. Use `changePassword` to update it:
+
+```typescript
+await authClient.changePassword({
+  newPassword: "newpassword1234",
+  currentPassword: "oldpassword1234",
+  revokeOtherSessions: true, // optional: sign out other devices
+});
+```
+
+### Set password
+
+Users who registered via OAuth do not have a password. Use the server-side `setPassword` method to add one. For security, this can only be called from the server — we recommend routing users through a forgot-password flow instead.
+
+```typescript title="set-password.ts"
+import { auth } from "@/lib/auth";
+
+await auth.api.setPassword({
+  body: {
+    newPassword: "new-password",
+  },
+  headers: await headers(),
+});
+```
+
+### Verify password
+
+Verify the current user's password before sensitive operations. This can only be called from the server.
+
+```typescript title="verify-password.ts"
+import { auth } from "@/lib/auth";
+
+await auth.api.verifyPassword({
+  body: {
+    password: "user-password",
+  },
+  headers: await headers(),
+});
+```
+
+<Note>
+For OAuth users without passwords, consider using email verification or fresh session checks for sensitive operations.
+</Note>
+
+## Deleting users
+
+User deletion is disabled by default. Enable it with `deleteUser.enabled`:
+
+```typescript title="auth.ts"
+import { betterAuth } from "better-auth";
+
+export const auth = betterAuth({
+  user: {
+    deleteUser: {
+      enabled: true,
+    },
+  },
+});
+```
+
+Once enabled, call `authClient.deleteUser()` to permanently remove a user's data.
+
+### Verification before deletion
+
+For added security, send a verification email before deleting the account. This is especially useful for OAuth users who cannot prove identity with a password.
+
+```typescript title="auth.ts"
+export const auth = betterAuth({
+  user: {
+    deleteUser: {
+      enabled: true,
+      sendDeleteAccountVerification: async (
+        { user, url, token },
+        request
+      ) => {
+        // send email with url or custom link using token
+      },
+    },
+  },
+});
+```
+
+```typescript
+// Client: trigger deletion via email verification
+await authClient.deleteUser({
+  callbackURL: "/goodbye",
+});
+
+// Client: delete with a custom token
+await authClient.deleteUser({ token });
+```
+
+### Authentication requirements
+
+To delete an account, the user must satisfy one of the following:
+
+<Steps>
+  <Step title="Provide a valid password">
+    ```typescript
+    await authClient.deleteUser({ password: "password" });
+    ```
+  </Step>
+  <Step title="Have a fresh session">
+    The user must have signed in recently. The `freshAge` defaults to 1 day.
+    ```typescript
+    await authClient.deleteUser();
+    ```
+  </Step>
+  <Step title="Complete email verification">
+    Required for OAuth users who have no password. Only works when `sendDeleteAccountVerification` is configured.
+    ```typescript
+    await authClient.deleteUser();
+    ```
+  </Step>
+</Steps>
+
+### Callbacks
+
+Run custom logic before and after user deletion:
+
+```typescript title="auth.ts"
+import { APIError } from "better-auth/api";
+
+export const auth = betterAuth({
+  user: {
+    deleteUser: {
+      enabled: true,
+      beforeDelete: async (user, request) => {
+        if (user.email.includes("admin")) {
+          throw new APIError("BAD_REQUEST", {
+            message: "Admin accounts can't be deleted",
+          });
+        }
+      },
+      afterDelete: async (user, request) => {
+        // cleanup external resources
+      },
+    },
+  },
+});
+```
+
+## Accounts
+
+Each authentication method is a **provider**. When a user signs in via a provider, an account record is created in the `account` table. Accounts store provider-returned data such as access tokens, refresh tokens, and scopes.
+
+### List user accounts
+
+```typescript
+import { authClient } from "@/lib/auth-client";
+
+const accounts = await authClient.listAccounts();
+```
+
+### Token encryption
+
+Better Auth does not encrypt tokens by default — this is intentional, giving you full control over encryption. Use `databaseHooks` to encrypt tokens before they are saved:
+
+```typescript
+import { betterAuth } from "better-auth";
+
+export const auth = betterAuth({
+  databaseHooks: {
+    account: {
+      create: {
+        before(account, context) {
+          const withEncryptedTokens = { ...account };
+          if (account.accessToken) {
+            withEncryptedTokens.accessToken = encrypt(account.accessToken);
+          }
+          if (account.refreshToken) {
+            withEncryptedTokens.refreshToken = encrypt(account.refreshToken);
+          }
+          return { data: withEncryptedTokens };
+        },
+      },
+    },
+  },
+});
+```
+
+Remember to decrypt tokens whenever you retrieve them from the database.
+
+### Account linking
+
+Account linking is enabled by default and lets users connect multiple authentication methods to a single user record. Linking requires the provider to confirm the email as verified.
+
+To disable account linking entirely:
+
+```typescript title="auth.ts"
+export const auth = betterAuth({
+  account: {
+    accountLinking: {
+      enabled: false,
+    },
+  },
+});
+```
+
+#### Trusted providers (forced linking)
+
+Specify providers that are trusted regardless of email verification status:
+
+```typescript title="auth.ts"
+export const auth = betterAuth({
+  account: {
+    accountLinking: {
+      enabled: true,
+      trustedProviders: ["google", "github"],
+    },
+  },
+});
+```
+
+<Warning>
+Use trusted providers with caution. Forcing account linking without email verification increases the risk of account takeover.
+</Warning>
+
+#### Manually linking social accounts
+
+Signed-in users can link additional social providers:
+
+```typescript
+import { authClient } from "@/lib/auth-client";
+
+await authClient.linkSocial({
+  provider: "google",
+  callbackURL: "/callback",
+});
+
+// Request additional scopes when linking
+await authClient.linkSocial({
+  provider: "google",
+  callbackURL: "/callback",
+  scopes: ["https://www.googleapis.com/auth/drive.readonly"],
+});
+
+// Link using an ID token (no redirect required)
+await authClient.linkSocial({
+  provider: "google",
+  idToken: {
+    token: "id_token_from_provider",
+    accessToken: "access_token",
+  },
+});
+```
+
+To allow linking with a different email address than the user's current one:
+
+```typescript title="auth.ts"
+export const auth = betterAuth({
+  account: {
+    accountLinking: {
+      allowDifferentEmails: true,
+    },
+  },
+});
+```
+
+To update user information when a new account is linked:
+
+```typescript title="auth.ts"
+export const auth = betterAuth({
+  account: {
+    accountLinking: {
+      updateUserInfoOnLink: true,
+    },
+  },
+});
+```
+
+#### Linking credential-based accounts
+
+For email/password accounts, use the server-side `setPassword` method or direct users through a forgot-password flow:
+
+```typescript title="set-password.ts"
+import { auth } from "@/lib/auth";
+
+await auth.api.setPassword({
+  body: { newPassword: "new-password" },
+  headers: await headers(),
+});
+```
+
+### Account unlinking
+
+Unlink a provider from the current user's account:
+
+```typescript
+import { authClient } from "@/lib/auth-client";
+
+await authClient.unlinkAccount({
+  providerId: "google",
+});
+
+// Unlink a specific account by ID
+await authClient.unlinkAccount({
+  providerId: "google",
+  accountId: "123",
+});
+```
+
+If the user has only one account, unlinking is blocked by default to prevent lockout. Override this with `allowUnlinkingAll`:
+
+```typescript title="auth.ts"
+export const auth = betterAuth({
+  account: {
+    accountLinking: {
+      allowUnlinkingAll: true,
+    },
+  },
+});
+```

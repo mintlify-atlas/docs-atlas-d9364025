@@ -1,0 +1,209 @@
+---
+title: TypeScript support
+description: Type inference, additional fields, plugin types, and recommended tsconfig settings for Better Auth.
+---
+
+Better Auth is designed from the ground up to be fully type-safe. Both the
+server instance and the client SDK expose types that reflect your exact
+configuration, including any plugins or extra fields you add.
+
+## Recommended tsconfig
+
+Better Auth requires `strictNullChecks` to be enabled for type inference to
+work correctly. The easiest way to ensure this is to enable `strict` mode:
+
+```json title="tsconfig.json"
+{
+  "compilerOptions": {
+    "strict": true
+  }
+}
+```
+
+If you cannot enable `strict`, enable `strictNullChecks` explicitly:
+
+```json title="tsconfig.json"
+{
+  "compilerOptions": {
+    "strictNullChecks": true
+  }
+}
+```
+
+<Warning>
+  If you run into "type instantiation is excessively deep" errors, make sure
+  `declaration` and `composite` are **not** enabled in your `tsconfig.json`,
+  in addition to following the settings above.
+</Warning>
+
+---
+
+## Inferring types with `$Infer`
+
+Both the server instance and the client expose an `$Infer` namespace. Plugins
+can extend base types like `User` and `Session`, and those extensions flow
+through automatically.
+
+### Server-side
+
+```ts title="auth.ts"
+import { betterAuth } from "better-auth";
+import Database from "better-sqlite3";
+
+export const auth = betterAuth({
+  database: new Database("database.db"),
+});
+
+// Infer the full Session type (includes user + session objects)
+type Session = typeof auth.$Infer.Session;
+// { session: Session; user: User }
+```
+
+### Client-side
+
+```ts title="auth-client.ts"
+import { createAuthClient } from "better-auth/client";
+
+const authClient = createAuthClient();
+
+// Same shape as the server-side type
+export type Session = typeof authClient.$Infer.Session;
+```
+
+---
+
+## Additional fields
+
+You can add extra fields to the `user` and `session` tables. All additional
+fields are fully typed on both the server and client.
+
+```ts title="auth.ts"
+export const auth = betterAuth({
+  user: {
+    additionalFields: {
+      role: {
+        type: "string",
+        input: false, // not settable by the client
+      },
+      bio: {
+        type: "string",
+        input: true,  // users can set this during sign-up
+      },
+    },
+  },
+});
+
+// role and bio are now part of the inferred User type
+type Session = typeof auth.$Infer.Session;
+```
+
+### The `input` property
+
+<Warning>
+  Additional fields default to `input: true`, meaning clients can provide a
+  value during sign-up. Always set `input: false` for sensitive fields like
+  `role` or `banned` that should only be set server-side.
+</Warning>
+
+| Value | Behaviour |
+| ----- | --------- |
+| `true` (default) | Field is accepted in sign-up/update requests |
+| `false` | Field is excluded from client input, only settable server-side |
+
+---
+
+## Inferring additional fields on the client
+
+The client needs to know about server-side additional fields for its types to
+match. There are two approaches depending on your project structure.
+
+### Same project (monorepo or single repo)
+
+Use the `inferAdditionalFields` plugin and pass your server `auth` type:
+
+```ts title="auth-client.ts"
+import { createAuthClient } from "better-auth/client";
+import { inferAdditionalFields } from "better-auth/client/plugins";
+import type { auth } from "@/lib/auth"; // import as type only
+
+export const authClient = createAuthClient({
+  plugins: [inferAdditionalFields<typeof auth>()],
+});
+
+// authClient.$Infer.Session.user.role is now typed as string
+```
+
+### Separate client and server projects
+
+Specify the fields manually when creating the client:
+
+```ts title="auth-client.ts"
+import { createAuthClient } from "better-auth/client";
+import { inferAdditionalFields } from "better-auth/client/plugins";
+
+export const authClient = createAuthClient({
+  plugins: [
+    inferAdditionalFields({
+      user: {
+        role: { type: "string" },
+        bio: { type: "string" },
+      },
+    }),
+  ],
+});
+```
+
+---
+
+## Plugin type inference
+
+Plugins extend `User`, `Session`, and other types transparently. Install a
+plugin on the server and its types automatically propagate through `$Infer`.
+
+```ts title="auth.ts"
+import { twoFactor } from "better-auth/plugins";
+
+export const auth = betterAuth({
+  plugins: [twoFactor()],
+});
+
+// twoFactorEnabled is now part of User
+type User = typeof auth.$Infer.Session["user"];
+// { id, name, email, emailVerified, image, createdAt, updatedAt, twoFactorEnabled, ... }
+```
+
+For client plugins, use the `$InferServerPlugin` helper to mirror the server
+plugin's types:
+
+```ts title="client.ts"
+import type { BetterAuthClientPlugin } from "better-auth/client";
+import type { twoFactor } from "better-auth/plugins";
+
+export const twoFactorClient = () => ({
+  id: "two-factor",
+  $InferServerPlugin: {} as ReturnType<typeof twoFactor>,
+} satisfies BetterAuthClientPlugin);
+```
+
+---
+
+## `useSession` type inference
+
+The `useSession` hook (React, Vue, Svelte, Solid) returns the same inferred
+`Session` type:
+
+```tsx
+import { createAuthClient } from "better-auth/react";
+import { inferAdditionalFields } from "better-auth/client/plugins";
+import type { auth } from "@/lib/auth";
+
+const { useSession } = createAuthClient({
+  plugins: [inferAdditionalFields<typeof auth>()],
+});
+
+function Profile() {
+  const { data } = useSession();
+  // data.user.role is typed if role is in additionalFields
+  return <span>{data?.user.role}</span>;
+}
+```

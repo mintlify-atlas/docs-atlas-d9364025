@@ -1,0 +1,346 @@
+---
+title: API Key
+description: Create, manage, and verify API keys for programmatic access to your application.
+---
+
+The API Key plugin lets you create and manage API keys for your application. It supports rate limiting, custom expiration, permissions, metadata, organization-owned keys, and optional Redis-backed storage.
+
+## Installation
+
+<Steps>
+  <Step>
+    ### Install the package
+
+    ```bash
+    npm install @better-auth/api-key
+    ```
+  </Step>
+
+  <Step>
+    ### Add the plugin to your auth config
+
+    ```ts title="auth.ts"
+    import { betterAuth } from "better-auth"
+    import { apiKey } from "@better-auth/api-key"
+
+    export const auth = betterAuth({
+      plugins: [
+        apiKey()
+      ]
+    })
+    ```
+  </Step>
+
+  <Step>
+    ### Migrate the database
+
+    ```bash
+    npx auth migrate
+    ```
+  </Step>
+
+  <Step>
+    ### Add the client plugin
+
+    ```ts title="auth-client.ts"
+    import { createAuthClient } from "better-auth/client"
+    import { apiKeyClient } from "@better-auth/api-key/client"
+
+    export const authClient = createAuthClient({
+      plugins: [
+        apiKeyClient()
+      ]
+    })
+    ```
+  </Step>
+</Steps>
+
+## Usage
+
+### Create an API key
+
+```ts
+const { data: apiKey } = await authClient.apiKey.create({
+  name: "My Project Key",
+  expiresIn: 60 * 60 * 24 * 30, // 30 days in seconds (optional)
+  prefix: "proj_",               // optional custom prefix
+  metadata: { environment: "production" }, // optional
+})
+
+// The key value is only returned once on creation
+console.log(apiKey.key) // "proj_abc123..."
+```
+
+<Warning>
+  The raw `key` value is only returned at creation time. Store it securely — it cannot be retrieved again.
+</Warning>
+
+**Creating a key server-side (for a specific user):**
+
+```ts
+const apiKey = await auth.api.createApiKey({
+  body: {
+    name: "CI/CD Key",
+    userId: "user-id",
+    permissions: {
+      files: ["read", "write"],
+      users: ["read"],
+    },
+  },
+})
+```
+
+### Verify an API key
+
+Verification is always server-side. Pass the key from the incoming request:
+
+```ts
+const result = await auth.api.verifyApiKey({
+  body: {
+    key: request.headers.get("x-api-key"),
+    // Optional: check required permissions
+    permissions: {
+      files: ["read"],
+    },
+  },
+})
+
+if (result.valid) {
+  // result.key contains the API key details (except the raw key value)
+  console.log(result.key.name, result.key.referenceId)
+} else {
+  console.error(result.error?.message)
+}
+```
+
+By default, Better Auth looks for the API key in the `x-api-key` request header.
+
+### Get an API key
+
+```ts
+const { data: key } = await authClient.apiKey.get({
+  id: "api-key-id",
+})
+// Returns everything except the raw key value
+```
+
+### List API keys
+
+```ts
+const { data } = await authClient.apiKey.list({
+  query: {
+    limit: 10,
+    offset: 0,
+    sortBy: "createdAt",
+    sortDirection: "desc",
+  },
+})
+// { apiKeys, total, limit, offset }
+
+// List organization-owned keys:
+const { data: orgKeys } = await authClient.apiKey.list({
+  query: { organizationId: "org-id" },
+})
+```
+
+### Update an API key
+
+```ts
+await authClient.apiKey.update({
+  keyId: "api-key-id",
+  name: "Renamed Key",
+  // Server-only fields require using auth.api.updateApiKey:
+  // enabled, remaining, refillAmount, refillInterval,
+  // metadata, expiresIn, rateLimitEnabled, rateLimitTimeWindow,
+  // rateLimitMax, permissions
+})
+```
+
+### Delete an API key
+
+```ts
+await authClient.apiKey.delete({
+  keyId: "api-key-id",
+})
+```
+
+## Permissions
+
+API keys support fine-grained, resource-based permissions.
+
+### Set default permissions
+
+```ts title="auth.ts"
+apiKey({
+  permissions: {
+    defaultPermissions: {
+      files: ["read"],
+      users: ["read"],
+    },
+    // Or dynamically:
+    // defaultPermissions: async (referenceId, ctx) => ({
+    //   files: ["read"],
+    // }),
+  },
+})
+```
+
+### Create a key with permissions
+
+```ts
+const key = await auth.api.createApiKey({
+  body: {
+    name: "Read-only Key",
+    userId: "user-id",
+    permissions: {
+      files: ["read"],
+      projects: ["read"],
+    },
+  },
+})
+```
+
+### Verify permissions
+
+```ts
+const result = await auth.api.verifyApiKey({
+  body: {
+    key: "api-key-value",
+    permissions: { files: ["write"] }, // will be false if key only has ["read"]
+  },
+})
+```
+
+## Using API keys for authentication
+
+Enable session creation from API keys to allow API key holders to authenticate as the associated user:
+
+```ts title="auth.ts"
+apiKey({
+  enableSessionForAPIKeys: true,
+})
+```
+
+With this enabled, if a valid API key is found in the `x-api-key` header, Better Auth will mock a user session for the request.
+
+## Configuration
+
+```ts title="auth.ts"
+import { apiKey } from "@better-auth/api-key"
+
+apiKey({
+  // Unique ID for this configuration (required with multiple configs)
+  configId: "default",
+
+  // Who owns the key: "user" | "organization" (default: "user")
+  references: "user",
+
+  // Header name to read API key from (default: "x-api-key")
+  apiKeyHeaders: "x-api-key",
+
+  // Length of generated keys (default: 64)
+  defaultKeyLength: 64,
+
+  // Default prefix for all keys
+  defaultPrefix: "sk_",
+
+  // Require a name on key creation
+  requireName: false,
+
+  // Enable storing metadata on keys
+  enableMetadata: true,
+
+  // Key expiration config
+  keyExpiration: {
+    defaultExpiresIn: null,       // null = never expires
+    disableCustomExpiresTime: false,
+    minExpiresIn: 1,              // minimum days
+    maxExpiresIn: 365,            // maximum days
+  },
+
+  // Rate limiting
+  rateLimit: {
+    enabled: true,
+    timeWindow: 60 * 1000,        // 1 minute window
+    maxRequests: 100,             // max requests per window
+  },
+
+  // Enable session creation from API keys
+  enableSessionForAPIKeys: false,
+})
+```
+
+### Secondary storage (Redis)
+
+For high-performance API key lookups, store keys in Redis instead of your primary database:
+
+```ts title="auth.ts"
+import { betterAuth } from "better-auth"
+import { apiKey } from "@better-auth/api-key"
+
+export const auth = betterAuth({
+  secondaryStorage: {
+    get: async (key) => await redis.get(key),
+    set: async (key, value, ttl) => {
+      if (ttl) await redis.set(key, value, { EX: ttl })
+      else await redis.set(key, value)
+    },
+    delete: async (key) => await redis.del(key),
+  },
+  plugins: [
+    apiKey({
+      storage: "secondary-storage",
+    }),
+  ],
+})
+```
+
+### Multiple configurations
+
+You can run multiple API key configurations side-by-side (e.g., public and private keys) by passing an array directly to `apiKey()`. Each configuration must have a unique `configId`:
+
+```ts title="auth.ts"
+import { apiKey } from "@better-auth/api-key"
+
+betterAuth({
+  plugins: [
+    apiKey([
+      { configId: "public", defaultPrefix: "pk_" },
+      { configId: "secret", defaultPrefix: "sk_" },
+    ]),
+  ],
+})
+```
+
+Specify `configId` when creating or verifying keys to use a specific configuration.
+
+## Schema
+
+The API Key plugin creates an `apikey` table:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `string` | Primary key |
+| `configId` | `string` | Configuration ID this key belongs to |
+| `name` | `string` | Optional human-readable name |
+| `start` | `string` | First few characters of the key (for display) |
+| `prefix` | `string` | Key prefix (stored in plaintext) |
+| `key` | `string` | Hashed API key |
+| `referenceId` | `string` | Owner ID (user ID or organization ID) |
+| `enabled` | `boolean` | Whether the key is active |
+| `expiresAt` | `Date` | Expiration date |
+| `rateLimitEnabled` | `boolean` | Whether rate limiting is active |
+| `rateLimitTimeWindow` | `number` | Rate limit time window in ms |
+| `rateLimitMax` | `number` | Max requests per window |
+| `requestCount` | `number` | Requests made in current window |
+| `remaining` | `number` | Remaining requests (if using remaining count) |
+| `refillAmount` | `number` | Amount to refill remaining count |
+| `refillInterval` | `number` | Refill interval in ms |
+| `permissions` | `string` | JSON-serialized permissions |
+| `metadata` | `string` | JSON-serialized metadata |
+| `createdAt` | `Date` | Creation timestamp |
+| `updatedAt` | `Date` | Last update timestamp |
+
+<Warning>
+  API keys are hashed before storage by default. Disabling hashing (`disableKeyHashing: true`) is strongly discouraged as it exposes raw keys if your database is breached.
+</Warning>

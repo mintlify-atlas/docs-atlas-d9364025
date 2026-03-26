@@ -1,0 +1,210 @@
+---
+title: Social providers
+description: Add OAuth sign-in with Google, GitHub, Apple, Discord, and many more providers.
+---
+
+Better Auth supports OAuth 2.0 / OIDC-based social sign-in out of the box. Configure the providers you need in your server config, then call `signIn.social` on the client.
+
+## Supported providers
+
+The following providers are natively supported and can be configured directly in `socialProviders`:
+
+| Provider | Key |
+|----------|-----|
+| Apple | `apple` |
+| Atlassian | `atlassian` |
+| Discord | `discord` |
+| Dropbox | `dropbox` |
+| Facebook | `facebook` |
+| Figma | `figma` |
+| GitHub | `github` |
+| GitLab | `gitlab` |
+| Google | `google` |
+| HuggingFace | `huggingface` |
+| Kakao | `kakao` |
+| Kick | `kick` |
+| Line | `line` |
+| Linear | `linear` |
+| LinkedIn | `linkedin` |
+| Microsoft | `microsoft` |
+| Naver | `naver` |
+| Notion | `notion` |
+| PayPal | `paypal` |
+| Polar | `polar` |
+| Railway | `railway` |
+| Reddit | `reddit` |
+| Roblox | `roblox` |
+| Salesforce | `salesforce` |
+| Slack | `slack` |
+| Spotify | `spotify` |
+| TikTok | `tiktok` |
+| Twitch | `twitch` |
+| Twitter / X | `twitter` |
+| Vercel | `vercel` |
+| VK | `vk` |
+| WeChat | `wechat` |
+| Zoom | `zoom` |
+
+For providers not in this list, use the [Generic OAuth plugin](/plugins/generic-oauth).
+
+## Configure social providers
+
+Add the providers you need to the `socialProviders` object in your `betterAuth` config. Each provider requires a `clientId` and `clientSecret` obtained from the provider's developer console.
+
+```ts title="auth.ts"
+import { betterAuth } from "better-auth";
+
+export const auth = betterAuth({
+  baseURL: process.env.BETTER_AUTH_URL, // used to build OAuth callback URLs
+  socialProviders: {
+    google: {
+      clientId: process.env.GOOGLE_CLIENT_ID as string,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET as string,
+    },
+    github: {
+      clientId: process.env.GITHUB_CLIENT_ID as string,
+      clientSecret: process.env.GITHUB_CLIENT_SECRET as string,
+    },
+    discord: {
+      clientId: process.env.DISCORD_CLIENT_ID as string,
+      clientSecret: process.env.DISCORD_CLIENT_SECRET as string,
+    },
+  },
+});
+```
+
+<Warning>
+  Set the `baseURL` (or `BETTER_AUTH_URL` env var) to avoid `redirect_uri_mismatch` errors. Better Auth uses it to construct the OAuth callback URL sent to each provider.
+</Warning>
+
+### Callback URL
+
+The callback URL for each provider follows the pattern:
+
+```
+http://localhost:3000/api/auth/callback/{provider}
+```
+
+Register this URL in each provider's developer console. For production, replace `http://localhost:3000` with your app's domain. For example:
+
+- Google: `https://example.com/api/auth/callback/google`
+- GitHub: `https://example.com/api/auth/callback/github`
+
+If you change the Better Auth base path, update the callback URL accordingly.
+
+## Sign in with a social provider
+
+Call `signIn.social` on the client, specifying the provider:
+
+```ts title="sign-in.ts"
+import { authClient } from "@/lib/auth-client";
+
+await authClient.signIn.social({
+  provider: "google",           // provider key from the table above
+  callbackURL: "/dashboard",    // redirect after successful sign-in
+  errorCallbackURL: "/error",   // redirect if an error occurs
+  newUserCallbackURL: "/welcome", // redirect for newly registered users
+  disableRedirect: false,       // set true to suppress automatic redirect
+});
+```
+
+By default, calling `signIn.social` redirects the user to the provider's authorization page. After the user authenticates, they are redirected back to `callbackURL`.
+
+### Sign in with an ID token or access token
+
+If you already have a token from the provider (for example from Google One Tap or a mobile SDK), pass it directly — no redirect occurs:
+
+```ts title="sign-in-id-token.ts"
+await authClient.signIn.social({
+  provider: "google",
+  idToken: {
+    token: "<google-id-token>",
+    accessToken: "<google-access-token>",
+  },
+});
+```
+
+## Requesting additional scopes
+
+Specify `scopes` in the provider config to request OAuth scopes beyond the defaults:
+
+```ts title="auth.ts"
+import { betterAuth } from "better-auth";
+
+export const auth = betterAuth({
+  socialProviders: {
+    google: {
+      clientId: process.env.GOOGLE_CLIENT_ID as string,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET as string,
+      scopes: ["openid", "email", "profile", "https://www.googleapis.com/auth/drive.file"],
+    },
+  },
+});
+```
+
+You can also request additional scopes after sign-in using `linkSocial`:
+
+```ts title="request-scopes.ts"
+await authClient.linkSocial({
+  provider: "google",
+  scopes: ["https://www.googleapis.com/auth/drive.file"],
+});
+```
+
+## Provider-specific options
+
+### Google
+
+```ts title="auth.ts"
+socialProviders: {
+  google: {
+    clientId: process.env.GOOGLE_CLIENT_ID as string,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET as string,
+    // Always prompt the user to select an account
+    prompt: "select_account",
+    // Always get a refresh token (requires user to re-consent)
+    accessType: "offline",
+  },
+},
+```
+
+### GitHub
+
+```ts title="auth.ts"
+socialProviders: {
+  github: {
+    clientId: process.env.GITHUB_CLIENT_ID as string,
+    clientSecret: process.env.GITHUB_CLIENT_SECRET as string,
+  },
+},
+```
+
+<Note>
+  GitHub does not issue refresh tokens for OAuth apps. Access tokens remain valid indefinitely unless explicitly revoked or unused for a year.
+
+  If you use a **GitHub App** (not an OAuth App), go to *Permissions and Events > Account Permissions > Email Addresses* and set it to **Read-Only**, otherwise you'll get an `email_not_found` error.
+</Note>
+
+## Custom OAuth providers
+
+For any provider not in the built-in list, use the [Generic OAuth plugin](/plugins/generic-oauth):
+
+```ts title="auth.ts"
+import { betterAuth } from "better-auth";
+import { genericOAuth } from "better-auth/plugins";
+
+export const auth = betterAuth({
+  plugins: [
+    genericOAuth({
+      config: [
+        {
+          providerId: "my-provider",
+          clientId: process.env.MY_PROVIDER_CLIENT_ID,
+          clientSecret: process.env.MY_PROVIDER_CLIENT_SECRET,
+          discoveryUrl: "https://auth.example.com/.well-known/openid-configuration",
+        },
+      ],
+    }),
+  ],
+});
+```

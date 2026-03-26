@@ -1,0 +1,441 @@
+---
+title: Plugins
+description: Learn how to use and create Better Auth plugins — defining endpoints, schemas, hooks, middleware, rate limits, trusted origins, and client plugins with custom actions.
+---
+
+Plugins are a core part of Better Auth. They let you extend base functionality with new authentication methods, features, and custom behaviors.
+
+Better Auth ships many built-in plugins. You can also create your own.
+
+## Using plugins
+
+Plugins can be server-side, client-side, or both.
+
+**Server plugin** — add to the `plugins` array in your auth config:
+
+```typescript title="server.ts"
+import { betterAuth } from "better-auth";
+
+export const auth = betterAuth({
+  plugins: [
+    // your plugins here
+  ],
+});
+```
+
+**Client plugin** — add when creating the auth client:
+
+```typescript title="auth-client.ts"
+import { createAuthClient } from "better-auth/client";
+
+const authClient = createAuthClient({
+  plugins: [
+    // your client plugins here
+  ],
+});
+```
+
+<Tip>
+Keep your auth client and your server auth instance in separate files to avoid importing server-only code on the client.
+</Tip>
+
+## What plugins can do
+
+- Create custom **endpoints** to handle any action.
+- Define **database schemas** (tables and columns).
+- Use **middleware** to intercept specific routes (API requests only).
+- Use **hooks** to intercept any endpoint call, including direct server calls.
+- Use **`onRequest`** and **`onResponse`** to affect all requests or responses.
+- Define custom **rate limit** rules.
+- Register **trusted origins**.
+
+## Creating a server plugin
+
+A server plugin is any object satisfying the `BetterAuthPlugin` interface. The only required field is `id`.
+
+```typescript title="plugin.ts"
+import type { BetterAuthPlugin } from "better-auth";
+
+export const myPlugin = () => {
+  return {
+    id: "my-plugin",
+  } satisfies BetterAuthPlugin;
+};
+```
+
+<Note>
+Wrap the plugin in a function so that options can be passed. This is consistent with all built-in plugins.
+</Note>
+
+### Endpoints
+
+Add endpoints using `createAuthEndpoint` from `better-auth/api`. Better Auth wraps the [Better Call](https://github.com/bekacru/better-call) framework to create endpoints.
+
+```typescript title="plugin.ts"
+import { createAuthEndpoint } from "better-auth/api";
+import type { BetterAuthPlugin } from "better-auth";
+
+const myPlugin = () => {
+  return {
+    id: "my-plugin",
+    endpoints: {
+      getHelloWorld: createAuthEndpoint(
+        "/my-plugin/hello-world",
+        { method: "GET" },
+        async (ctx) => {
+          return ctx.json({ message: "Hello World" });
+        }
+      ),
+    },
+  } satisfies BetterAuthPlugin;
+};
+```
+
+The `ctx` object provides access to Better Auth-specific context via `ctx.context`:
+
+| Property | Description |
+|----------|-------------|
+| `appName` | Application name (defaults to "Better Auth") |
+| `options` | Options passed to the Better Auth instance |
+| `tables` | Core table definitions |
+| `baseURL` | Auth server base URL including path |
+| `session` | Session configuration (`updateAge`, `expiresIn`) |
+| `secret` | Auth secret key |
+| `authCookie` | Default cookie configuration |
+| `logger` | Logger instance |
+| `db` | Kysely instance for raw queries |
+| `adapter` | ORM-like adapter for database operations |
+| `internalAdapter` | Internal DB calls (e.g., `createSession`, `createUser`) |
+| `trustedOrigins` | Configured trusted origins list |
+| `isTrustedOrigin` | Helper to validate a URL against trusted origins |
+
+**Endpoint rules:**
+- Use kebab-case for paths.
+- Use `GET` for data retrieval, `POST` for mutations.
+- Prefix paths with the plugin name (e.g., `/my-plugin/hello-world`).
+- Always use `createAuthEndpoint` — do not create raw endpoints.
+
+### Schema
+
+Define a database schema for your plugin:
+
+```typescript title="plugin.ts"
+const myPlugin = () => {
+  return {
+    id: "my-plugin",
+    schema: {
+      myTable: {
+        fields: {
+          name: {
+            type: "string",
+          },
+        },
+        modelName: "myTable", // optional override
+      },
+    },
+  } satisfies BetterAuthPlugin;
+};
+```
+
+Better Auth automatically adds an `id` field to each table.
+
+**Field options:**
+
+| Option | Description |
+|--------|-------------|
+| `type` | `"string"`, `"number"`, `"boolean"`, or `"date"` |
+| `required` | Required on create (default: `true`) |
+| `unique` | Must be unique (default: `false`) |
+| `references` | Foreign key reference: `{ model, field, onDelete }` |
+
+**Schema options:**
+
+| Option | Description |
+|--------|-------------|
+| `disableMigration` | Skip migration for this table (default: `false`) |
+
+Fields added to the `user` or `session` table are automatically inferred by TypeScript in endpoints that return those objects:
+
+```typescript title="plugin.ts"
+const myPlugin = () => {
+  return {
+    id: "my-plugin",
+    schema: {
+      user: {
+        fields: {
+          age: { type: "number" },
+        },
+      },
+    },
+  } satisfies BetterAuthPlugin;
+};
+```
+
+<Warning>
+Do not store sensitive information in the `user` or `session` tables. Create a separate table for sensitive data.
+</Warning>
+
+### Hooks
+
+Hooks run before or after an endpoint is executed, whether called via HTTP or directly on the server.
+
+```typescript title="plugin.ts"
+import { createAuthMiddleware } from "better-auth/api";
+
+const myPlugin = () => {
+  return {
+    id: "my-plugin",
+    hooks: {
+      before: [
+        {
+          matcher: (context) => context.headers.get("x-my-header") === "my-value",
+          handler: createAuthMiddleware(async (ctx) => {
+            // modify context before the request
+            return { context: ctx };
+          }),
+        },
+      ],
+      after: [
+        {
+          matcher: (context) => context.path === "/sign-up/email",
+          handler: createAuthMiddleware(async (ctx) => {
+            return ctx.json({ message: "Hello World" });
+          }),
+        },
+      ],
+    },
+  } satisfies BetterAuthPlugin;
+};
+```
+
+### Middleware
+
+Middleware only runs on API requests from a client (not on direct server calls). Use `middlewares` to target specific paths:
+
+```typescript title="plugin.ts"
+import { createAuthMiddleware } from "better-auth/api";
+
+const myPlugin = () => {
+  return {
+    id: "my-plugin",
+    middlewares: [
+      {
+        path: "/my-plugin/hello-world",
+        middleware: createAuthMiddleware(async (ctx) => {
+          // run logic for this path
+        }),
+      },
+    ],
+  } satisfies BetterAuthPlugin;
+};
+```
+
+Throw an `APIError` or return a `Response` to stop the request and send an error to the client.
+
+### `onRequest` and `onResponse`
+
+Use these to intercept all requests or responses:
+
+```typescript title="plugin.ts"
+const myPlugin = () => {
+  return {
+    id: "my-plugin",
+    onRequest: async (request, context) => {
+      // return { response } to interrupt, or return a modified request
+    },
+    onResponse: async (response, context) => {
+      // return a modified response, or nothing to pass through
+    },
+  } satisfies BetterAuthPlugin;
+};
+```
+
+### Rate limiting
+
+Define custom rate limit rules for your plugin's endpoints:
+
+```typescript title="plugin.ts"
+const myPlugin = () => {
+  return {
+    id: "my-plugin",
+    rateLimit: [
+      {
+        pathMatcher: (path) => path === "/my-plugin/hello-world",
+        limit: 10,
+        window: 60,
+      },
+    ],
+  } satisfies BetterAuthPlugin;
+};
+```
+
+### Trusted origins
+
+Register additional trusted origins and validate URLs in your endpoints:
+
+```typescript title="plugin.ts"
+import { createAuthEndpoint, APIError } from "better-auth/api";
+import * as z from "zod";
+
+const myPlugin = () => {
+  return {
+    id: "my-plugin",
+    trustedOrigins: ["http://trusted.com"],
+    endpoints: {
+      getTrustedHelloWorld: createAuthEndpoint(
+        "/my-plugin/hello-world",
+        {
+          method: "GET",
+          query: z.object({ url: z.string() }),
+        },
+        async (ctx) => {
+          if (!ctx.context.isTrustedOrigin(ctx.query.url, { allowRelativePaths: false })) {
+            throw new APIError("FORBIDDEN", {
+              message: "origin is not trusted.",
+            });
+          }
+          return ctx.json({ message: "Hello World" });
+        }
+      ),
+    },
+  } satisfies BetterAuthPlugin;
+};
+```
+
+### Helper functions
+
+#### `getSessionFromCtx`
+
+Retrieve the current client session inside a middleware or hook:
+
+```typescript title="plugin.ts"
+import { getSessionFromCtx, createAuthMiddleware } from "better-auth/api";
+
+const myPlugin = {
+  id: "my-plugin",
+  hooks: {
+    before: [
+      {
+        matcher: (context) => context.headers.get("x-my-header") === "my-value",
+        handler: createAuthMiddleware(async (ctx) => {
+          const session = await getSessionFromCtx(ctx);
+          return { context: ctx };
+        }),
+      },
+    ],
+  },
+} satisfies BetterAuthPlugin;
+```
+
+#### `sessionMiddleware`
+
+A built-in middleware that validates the session and attaches it to the context:
+
+```typescript title="plugin.ts"
+import { createAuthEndpoint, sessionMiddleware } from "better-auth/api";
+
+const myPlugin = () => {
+  return {
+    id: "my-plugin",
+    endpoints: {
+      getHelloWorld: createAuthEndpoint(
+        "/my-plugin/hello-world",
+        { method: "GET", use: [sessionMiddleware] },
+        async (ctx) => {
+          const session = ctx.context.session;
+          return ctx.json({ message: "Hello World" });
+        }
+      ),
+    },
+  } satisfies BetterAuthPlugin;
+};
+```
+
+## Creating a client plugin
+
+If your server plugin has endpoints that need to be called from the client, create a matching client plugin.
+
+```typescript title="client-plugin.ts"
+import type { BetterAuthClientPlugin } from "better-auth/client";
+
+export const myPluginClient = () => {
+  return {
+    id: "my-plugin",
+  } satisfies BetterAuthClientPlugin;
+};
+```
+
+### Inferring server endpoints
+
+The client can automatically infer endpoints from your server plugin. Kebab-case paths are converted to camelCase object keys — `/my-plugin/hello-world` becomes `myPlugin.helloWorld`.
+
+```typescript title="client-plugin.ts"
+import type { BetterAuthClientPlugin } from "better-auth/client";
+import type { myPlugin } from "./plugin";
+
+const myPluginClient = () => {
+  return {
+    id: "my-plugin",
+    $InferServerPlugin: {} as ReturnType<typeof myPlugin>,
+  } satisfies BetterAuthClientPlugin;
+};
+```
+
+### Custom client actions
+
+Use `getActions` to add additional methods to the client. The client uses [Better Fetch](https://better-fetch.vercel.app) for HTTP requests.
+
+```typescript title="client-plugin.ts"
+import type { BetterAuthClientPlugin } from "better-auth/client";
+import type { BetterFetchOption } from "@better-fetch/fetch";
+import type { myPlugin } from "./plugin";
+
+const myPluginClient = {
+  id: "my-plugin",
+  $InferServerPlugin: {} as ReturnType<typeof myPlugin>,
+  getActions: ($fetch) => ({
+    myCustomAction: async (
+      data: { foo: string },
+      fetchOptions?: BetterFetchOption
+    ) => {
+      return $fetch("/custom/action", {
+        method: "POST",
+        body: { foo: data.foo },
+        ...fetchOptions,
+      });
+    },
+  }),
+} satisfies BetterAuthClientPlugin;
+```
+
+### Reactive atoms
+
+Use `getAtoms` to expose reactive state (like `useSession`) via [nanostores](https://github.com/nanostores/nanostores). Atoms are resolved by each framework's `useStore` hook.
+
+```typescript title="client-plugin.ts"
+import { atom } from "nanostores";
+import type { BetterAuthClientPlugin } from "better-auth/client";
+
+const myPluginClient = {
+  id: "my-plugin",
+  $InferServerPlugin: {} as ReturnType<typeof myPlugin>,
+  getAtoms: ($fetch) => {
+    const myAtom = atom<null>();
+    return { myAtom };
+  },
+} satisfies BetterAuthClientPlugin;
+```
+
+### Path method overrides
+
+By default, endpoints without a body use `GET` and endpoints with a body use `POST`. Override this with `pathMethods`:
+
+```typescript title="client-plugin.ts"
+const myPluginClient = {
+  id: "my-plugin",
+  $InferServerPlugin: {} as ReturnType<typeof myPlugin>,
+  pathMethods: {
+    "/my-plugin/hello-world": "POST",
+  },
+} satisfies BetterAuthClientPlugin;
+```

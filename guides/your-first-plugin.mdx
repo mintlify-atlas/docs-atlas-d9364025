@@ -1,0 +1,218 @@
+---
+title: Creating your first plugin
+description: A step-by-step guide to building a Better Auth plugin with a server component, client component, schema, hooks, and custom endpoints.
+---
+
+This guide walks through creating a complete Better Auth plugin from scratch.
+We'll build a **birthday plugin** that stores user birth dates and enforces
+an age requirement during sign-up.
+
+<Info>
+  This guide assumes you have already [set up Better Auth](/installation)
+  in your project.
+</Info>
+
+## How plugins work
+
+A Better Auth plugin is a pair of objects:
+
+- **Server plugin** — registered in `betterAuth({ plugins: [] })`. Defines the
+  schema, endpoints, and lifecycle hooks.
+- **Client plugin** — registered in `createAuthClient({ plugins: [] })`. Mirrors
+  the server types and can add client-side helper methods.
+
+Both implement a simple interface (`BetterAuthPlugin` /
+`BetterAuthClientPlugin`) that Better Auth merges at startup.
+
+---
+
+## Building the server plugin
+
+<Steps>
+  <Step title="Create the plugin file">
+    Create a `birthday-plugin/index.ts` file:
+
+    ```ts title="birthday-plugin/index.ts"
+    import type { BetterAuthPlugin } from "better-auth";
+
+    export const birthdayPlugin = () =>
+      ({
+        id: "birthdayPlugin",
+      } satisfies BetterAuthPlugin);
+    ```
+
+    This is already a valid plugin — it just doesn't do anything yet.
+  </Step>
+
+  <Step title="Define the schema">
+    Extend the built-in `user` model with a `birthday` field. Better Auth's CLI
+    reads this schema when running `generate` or `migrate`.
+
+    ```ts title="birthday-plugin/index.ts"
+    import type { BetterAuthPlugin } from "better-auth";
+
+    export const birthdayPlugin = () =>
+      ({
+        id: "birthdayPlugin",
+        schema: {
+          user: {
+            fields: {
+              birthday: {
+                type: "date",     // "string" | "number" | "boolean" | "date"
+                required: true,
+                unique: false,
+              },
+            },
+          },
+        },
+      } satisfies BetterAuthPlugin);
+    ```
+  </Step>
+
+  <Step title="Add a before hook">
+    Use a `before` hook to validate that the signing-up user is at least 5 years
+    old. Hooks receive the request context and can throw `APIError` to reject
+    the request.
+
+    ```ts title="birthday-plugin/index.ts"
+    import type { BetterAuthPlugin } from "better-auth";
+    import { createAuthMiddleware, APIError } from "better-auth/api";
+
+    export const birthdayPlugin = () =>
+      ({
+        id: "birthdayPlugin",
+        schema: {
+          user: {
+            fields: {
+              birthday: { type: "date", required: true },
+            },
+          },
+        },
+        hooks: {
+          before: [
+            {
+              matcher: (ctx) => ctx.path.startsWith("/sign-up/email"),
+              handler: createAuthMiddleware(async (ctx) => {
+                const { birthday } = ctx.body;
+
+                if (!(birthday instanceof Date)) {
+                  throw new APIError("BAD_REQUEST", {
+                    message: "Birthday must be a Date object.",
+                  });
+                }
+
+                const fiveYearsAgo = new Date();
+                fiveYearsAgo.setFullYear(fiveYearsAgo.getFullYear() - 5);
+
+                if (birthday >= fiveYearsAgo) {
+                  throw new APIError("BAD_REQUEST", {
+                    message: "User must be older than 5 years.",
+                  });
+                }
+
+                return { context: ctx };
+              }),
+            },
+          ],
+        },
+      } satisfies BetterAuthPlugin);
+    ```
+
+    <Tip>
+      Return `{ context: ctx }` at the end of a `before` hook to pass the
+      (potentially modified) context to the next handler. Return nothing to
+      short-circuit with an implicit 200.
+    </Tip>
+  </Step>
+
+  <Step title="Register the server plugin">
+    Add the plugin to your auth config:
+
+    ```ts title="auth.ts"
+    import { betterAuth } from "better-auth";
+    import { birthdayPlugin } from "./birthday-plugin";
+
+    export const auth = betterAuth({
+      plugins: [birthdayPlugin()],
+    });
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Building the client plugin
+
+<Steps>
+  <Step title="Create the client file">
+    Create `birthday-plugin/client.ts`. The client plugin's main job is to
+    import the server plugin's return type so that client types stay in sync.
+
+    ```ts title="birthday-plugin/client.ts"
+    import type { BetterAuthClientPlugin } from "better-auth/client";
+    import type { birthdayPlugin } from "./index";
+
+    type BirthdayPlugin = typeof birthdayPlugin;
+
+    export const birthdayClientPlugin = () =>
+      ({
+        id: "birthdayPlugin",
+        $InferServerPlugin: {} as ReturnType<BirthdayPlugin>,
+      } satisfies BetterAuthClientPlugin);
+    ```
+  </Step>
+
+  <Step title="Register the client plugin">
+    ```ts title="auth-client.ts"
+    import { createAuthClient } from "better-auth/client";
+    import { birthdayClientPlugin } from "./birthday-plugin/client";
+
+    export const authClient = createAuthClient({
+      plugins: [birthdayClientPlugin()],
+    });
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Update the database schema
+
+After writing your plugin, generate or apply the schema changes:
+
+```bash
+# For Prisma / Drizzle — generate the schema file
+npx auth@latest generate
+
+# For Kysely — apply migrations directly
+npx auth@latest migrate
+```
+
+---
+
+## Plugin structure reference
+
+A server plugin can implement any combination of these properties:
+
+| Property | Type | Purpose |
+| -------- | ---- | ------- |
+| `id` | `string` | Unique plugin identifier |
+| `schema` | `Schema` | Database table extensions |
+| `hooks.before` | `Hook[]` | Middleware run before handlers |
+| `hooks.after` | `Hook[]` | Middleware run after handlers |
+| `endpoints` | `Record<string, Endpoint>` | New API endpoints |
+| `middlewares` | `Middleware[]` | Express-style middleware |
+| `init` | `(ctx) => void` | Called once at startup |
+| `onRequest` | `(request, ctx) => void` | Called on every request |
+| `onResponse` | `(response, ctx) => void` | Called on every response |
+
+See the [plugins documentation](/concepts/plugins) for the complete API.
+
+---
+
+## Next steps
+
+- Read the [plugins concepts page](/concepts/plugins) for advanced patterns
+  like adding custom endpoints and custom client methods.
+- Share your plugin on [Discord](https://discord.gg/better-auth) or open a PR
+  to share it with the community.

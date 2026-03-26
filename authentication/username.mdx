@@ -1,0 +1,164 @@
+---
+title: Username
+description: Allow users to sign up and sign in with a username using the username plugin.
+---
+
+The username plugin extends email/password authentication so users can sign in with a username instead of (or in addition to) their email address.
+
+## Installation
+
+<Steps>
+  <Step title="Add the server plugin">
+    Enable `emailAndPassword` and add the `username` plugin:
+
+    ```ts title="auth.ts"
+    import { betterAuth } from "better-auth";
+    import { username } from "better-auth/plugins";
+
+    export const auth = betterAuth({
+      emailAndPassword: {
+        enabled: true,
+      },
+      plugins: [
+        username(),
+      ],
+    });
+    ```
+  </Step>
+
+  <Step title="Run the database migration">
+    The plugin adds `username` and `displayUsername` columns to the user table:
+
+    <Tabs>
+      <Tab title="migrate">
+        ```bash
+        npx auth migrate
+        ```
+      </Tab>
+      <Tab title="generate">
+        ```bash
+        npx auth generate
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Add the client plugin">
+    ```ts title="auth-client.ts"
+    import { createAuthClient } from "better-auth/client";
+    import { usernameClient } from "better-auth/client/plugins";
+
+    export const authClient = createAuthClient({
+      plugins: [
+        usernameClient(),
+      ],
+    });
+    ```
+  </Step>
+</Steps>
+
+## Usage
+
+### Sign up with a username
+
+Pass a `username` field to the existing `signUp.email` method:
+
+```ts title="sign-up.ts"
+import { authClient } from "@/lib/auth-client";
+
+const { data, error } = await authClient.signUp.email({
+  email: "jane@example.com",
+  password: "password1234",
+  name: "Jane Doe",
+  username: "janedoe",           // normalized username (e.g. lowercased)
+  displayUsername: "JaneDoe123", // optional: the un-normalized display version
+});
+```
+
+<Note>
+  If only `username` is provided, `displayUsername` is automatically set to the pre-normalized value of `username`. Usernames are lowercased by default — `"JaneDoe"` and `"janedoe"` are treated as the same username.
+</Note>
+
+### Sign in with a username
+
+Use the `signIn.username` method added by the plugin:
+
+```ts title="sign-in.ts"
+import { authClient } from "@/lib/auth-client";
+
+const { data, error } = await authClient.signIn.username({
+  username: "janedoe",
+  password: "password1234",
+});
+```
+
+### Update a username
+
+```ts title="update-username.ts"
+import { authClient } from "@/lib/auth-client";
+
+await authClient.updateUser({
+  username: "new-username",
+});
+```
+
+### Check username availability
+
+```ts title="check-username.ts"
+import { authClient } from "@/lib/auth-client";
+
+const { data } = await authClient.isUsernameAvailable({
+  username: "janedoe",
+});
+
+if (data?.available) {
+  console.log("Username is available");
+}
+```
+
+## Configuration options
+
+All options are passed to `username()` on the server:
+
+```ts title="auth.ts"
+import { betterAuth } from "better-auth";
+import { username } from "better-auth/plugins";
+
+export const auth = betterAuth({
+  emailAndPassword: { enabled: true },
+  plugins: [
+    username({
+      minUsernameLength: 3,     // default: 3
+      maxUsernameLength: 30,    // default: 30
+      usernameValidator: (username) => {
+        // Return false to reject the username
+        if (username === "admin") return false;
+        return true;
+      },
+      usernameNormalization: (username) => username.toLowerCase(),
+      displayUsernameValidator: (displayUsername) => {
+        return /^[a-zA-Z0-9_-]+$/.test(displayUsername);
+      },
+    }),
+  ],
+});
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `minUsernameLength` | `number` | `3` | Minimum username length. |
+| `maxUsernameLength` | `number` | `30` | Maximum username length. |
+| `usernameValidator` | `function` | — | Custom validation function. Return `false` to reject. |
+| `displayUsernameValidator` | `function` | — | Custom validation for the display username. |
+| `usernameNormalization` | `function \| false` | lowercase | Normalization applied before storing. Pass `false` to disable. |
+| `displayUsernameNormalization` | `function \| false` | none | Normalization applied to `displayUsername`. |
+| `validationOrder` | `object` | pre-normalization | Set to `"post-normalization"` to validate after normalizing. |
+
+## Database schema
+
+The plugin adds two optional columns to the `user` table:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `username` | `string` (unique) | Normalized username. |
+| `displayUsername` | `string` | Un-normalized display version of the username. |

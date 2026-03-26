@@ -1,0 +1,186 @@
+---
+title: Anonymous
+description: Allow users to sign in without any personal information, then convert to a permanent account later.
+---
+
+The Anonymous plugin lets users have a full authenticated experience without providing an email, password, or any other personally identifiable information. They can link an authentication method to their account at any point.
+
+This is useful for e-commerce flows where you want to preserve a shopping cart, or any application where you want to reduce friction for new visitors.
+
+## Installation
+
+<Steps>
+  <Step>
+    ### Add the plugin to your auth config
+
+    ```ts title="auth.ts"
+    import { betterAuth } from "better-auth"
+    import { anonymous } from "better-auth/plugins"
+
+    export const auth = betterAuth({
+      plugins: [
+        anonymous()
+      ]
+    })
+    ```
+  </Step>
+
+  <Step>
+    ### Migrate the database
+
+    ```bash
+    npx auth migrate
+    ```
+  </Step>
+
+  <Step>
+    ### Add the client plugin
+
+    ```ts title="auth-client.ts"
+    import { createAuthClient } from "better-auth/client"
+    import { anonymousClient } from "better-auth/client/plugins"
+
+    export const authClient = createAuthClient({
+      plugins: [
+        anonymousClient()
+      ]
+    })
+    ```
+  </Step>
+</Steps>
+
+## Usage
+
+### Sign in anonymously
+
+```ts
+import { authClient } from "@/lib/auth-client"
+
+const { data: user, error } = await authClient.signIn.anonymous()
+```
+
+This creates a real user record in the database with a generated email address (e.g. `temp@<id>.com`). The user gets a full session and can interact with your application normally.
+
+### Link an account
+
+When an anonymous user wants to create a permanent account, they can sign in or sign up with another method. Their anonymous session will automatically be linked to the new account.
+
+First, configure the `onLinkAccount` callback to migrate any data:
+
+```ts title="auth.ts"
+import { betterAuth } from "better-auth"
+import { anonymous } from "better-auth/plugins"
+
+export const auth = betterAuth({
+  plugins: [
+    anonymous({
+      onLinkAccount: async ({ anonymousUser, newUser }) => {
+        // Move cart items, preferences, etc. from anonymous user to new user
+        await db.cartItems.updateMany({
+          where: { userId: anonymousUser.user.id },
+          data: { userId: newUser.user.id },
+        })
+      },
+    }),
+  ],
+})
+```
+
+Then sign in or sign up from the client as normal:
+
+```ts
+// The onLinkAccount callback fires, then the anonymous user is deleted
+const { data } = await authClient.signIn.email({
+  email: "user@example.com",
+  password: "password",
+})
+```
+
+After account linking, the anonymous user record is deleted by default.
+
+### Delete an anonymous user
+
+Anonymous users can also explicitly delete their own account:
+
+```ts
+await authClient.deleteAnonymousUser()
+```
+
+<Note>
+  The `/delete-anonymous-user` endpoint is automatically disabled if you set `disableDeleteAnonymousUser: true`.
+</Note>
+
+## Options
+
+### `emailDomainName`
+
+Customize the domain used in generated email addresses. Default format is `temp@{id}.com`.
+
+```ts
+anonymous({
+  emailDomainName: "example.com",
+  // Generated email: temp-{id}@example.com
+})
+```
+
+### `generateRandomEmail`
+
+Provide a fully custom function to generate email addresses:
+
+```ts
+anonymous({
+  generateRandomEmail: () => {
+    const id = crypto.randomUUID()
+    return `guest-${id}@example.com`
+  },
+})
+```
+
+<Note>
+  If `generateRandomEmail` is provided, `emailDomainName` is ignored. You are responsible for uniqueness and valid email format.
+</Note>
+
+### `generateName`
+
+Generate a display name for anonymous users:
+
+```ts
+anonymous({
+  generateName: () => {
+    const adjectives = ["Anonymous", "Mystery", "Unknown"]
+    const animals = ["Panda", "Fox", "Owl"]
+    return `${adjectives[Math.floor(Math.random() * adjectives.length)]} ${animals[Math.floor(Math.random() * animals.length)]}`
+  },
+})
+```
+
+### `onLinkAccount`
+
+Callback fired when an anonymous user links their account to a permanent authentication method. Receives `{ anonymousUser, newUser }`.
+
+### `disableDeleteAnonymousUser`
+
+Set to `true` to prevent anonymous users from calling the `/delete-anonymous-user` endpoint. Also disables automatic deletion when an account is linked.
+
+```ts
+anonymous({
+  disableDeleteAnonymousUser: true,
+})
+```
+
+## Schema
+
+The anonymous plugin adds one field to the `user` table:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `isAnonymous` | `boolean` | `true` for anonymous users, `null`/`false` for regular users |
+
+Use this field to adjust your application's behavior for anonymous vs. authenticated users:
+
+```ts
+const session = await auth.api.getSession({ headers })
+if (session?.user.isAnonymous) {
+  // Prompt user to create a permanent account
+}
+```

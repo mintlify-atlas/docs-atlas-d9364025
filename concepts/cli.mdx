@@ -1,0 +1,197 @@
+---
+title: CLI Reference
+description: Better Auth CLI commands for generating schemas, running migrations, and more.
+---
+
+Better Auth ships a CLI that helps you generate database schemas, apply migrations, initialise projects, and gather diagnostic information.
+
+```bash
+npx auth@latest <command> [options]
+```
+
+---
+
+## `generate`
+
+Generates the schema required by Better Auth for your database adapter.
+
+- **Prisma** — appends models to `prisma/schema.prisma`
+- **Drizzle** — writes a `schema.ts` file in your project root
+- **Kysely** — writes a raw `schema.sql` file in your project root
+
+```bash
+npx auth@latest generate
+```
+
+### Options
+
+| Flag | Description |
+| ---- | ----------- |
+| `--output <path>` | Override where the generated file is saved |
+| `--config <path>` | Path to your Better Auth config file |
+| `--yes` | Skip the confirmation prompt |
+
+By default the CLI searches for an auth config file (`auth.ts`) in `./`, `./utils`, `./lib`, and the same directories under `src/`.
+
+---
+
+## `migrate`
+
+Applies the Better Auth schema directly to your database. Only available
+when using the built-in **Kysely** adapter. For Prisma, Drizzle, or other
+ORMs use their own migration tooling after running `generate`.
+
+```bash
+npx auth@latest migrate
+```
+
+### Options
+
+| Flag | Description |
+| ---- | ----------- |
+| `--config <path>` | Path to your Better Auth config file |
+| `--yes` | Skip the confirmation prompt |
+
+<Info>
+  **PostgreSQL non-default schema**: The migrate command automatically detects
+  your configured `search_path` and creates tables in the correct schema. See
+  the [PostgreSQL adapter docs](/adapters/postgresql#use-a-non-default-schema)
+  for configuration details.
+</Info>
+
+---
+
+## `init`
+
+Bootstraps a Better Auth configuration file in an existing project.
+
+```bash
+npx auth@latest init
+```
+
+### Options
+
+| Flag | Description |
+| ---- | ----------- |
+| `--name <name>` | Application name (defaults to `name` in `package.json`) |
+| `--framework <framework>` | Framework preset (`next`) |
+| `--plugins <list>` | Comma-separated list of plugins to include |
+| `--database <db>` | Database preset (`sqlite`) |
+| `--package-manager <pm>` | Package manager to use: `npm`, `pnpm`, `yarn`, or `bun` |
+
+---
+
+## `secret`
+
+Generates a cryptographically random secret suitable for the `BETTER_AUTH_SECRET`
+environment variable.
+
+```bash
+npx auth@latest secret
+```
+
+You can also generate a secret using OpenSSL directly:
+
+```bash
+openssl rand -base64 32
+```
+
+---
+
+## `info`
+
+Prints diagnostic information about your Better Auth setup. Useful for
+debugging and including in bug reports.
+
+```bash
+npx auth@latest info
+```
+
+### Output includes
+
+- **System** — OS, CPU, memory, Node.js version
+- **Package manager** — detected manager and version
+- **Better Auth** — installed version and config (sensitive values auto-redacted)
+- **Frameworks** — detected frameworks (Next.js, React, Vue, etc.)
+- **Databases** — detected ORM clients (Prisma, Drizzle, etc.)
+
+### Options
+
+| Flag | Description |
+| ---- | ----------- |
+| `--config <path>` | Path to your Better Auth config file |
+| `--json` | Output as JSON for sharing or programmatic use |
+
+```bash
+# JSON output for sharing
+npx auth@latest info --json > auth-info.json
+```
+
+Secrets, API keys, and database URLs are automatically replaced with
+`[REDACTED]` in the output.
+
+---
+
+## `mcp`
+
+Adds the Better Auth MCP (Model Context Protocol) server to your AI coding assistant. This enables AI tools like Claude Code, Cursor, or Open Code to understand Better Auth APIs and help you implement authentication.
+
+```bash
+npx auth@latest mcp [options]
+```
+
+### Options
+
+| Flag | Description |
+| ---- | ----------- |
+| `--claude-code` | Add Better Auth MCP to Claude Code |
+| `--cursor` | Add Better Auth MCP to Cursor |
+| `--open-code` | Add Better Auth MCP to Open Code |
+| `--manual` | Print manual MCP configuration instructions |
+
+<Tabs>
+  <Tab title="Claude Code">
+    ```bash
+    npx auth@latest mcp --claude-code
+    ```
+  </Tab>
+  <Tab title="Cursor">
+    ```bash
+    npx auth@latest mcp --cursor
+    ```
+  </Tab>
+  <Tab title="Open Code">
+    ```bash
+    npx auth@latest mcp --open-code
+    ```
+  </Tab>
+  <Tab title="Manual">
+    ```bash
+    npx auth@latest mcp --manual
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## `upgrade`
+
+Upgrades Better Auth and its related packages to the latest version.
+
+```bash
+npx auth@latest upgrade
+```
+
+---
+
+## Troubleshooting
+
+### `Error: Cannot find module X`
+
+The CLI cannot resolve imported modules in your config file. Try these steps:
+
+1. Remove import aliases and use relative paths instead.
+2. Run the CLI command.
+3. Revert to using aliases.
+
+This is a known limitation and is being worked on.

@@ -1,0 +1,382 @@
+---
+title: Single Sign-On (SSO)
+description: Enterprise SSO with SAML 2.0 and OIDC support, including automatic user provisioning and organization mapping.
+---
+
+The SSO plugin adds Single Sign-On support to Better Auth. It supports OpenID Connect (OIDC), OAuth 2.0, and SAML 2.0 providers, allowing users to authenticate with their corporate identity provider.
+
+## Installation
+
+<Steps>
+  <Step>
+    ### Install the package
+
+    ```bash
+    npm install @better-auth/sso
+    ```
+  </Step>
+
+  <Step>
+    ### Add the plugin to your auth config
+
+    ```ts title="auth.ts"
+    import { betterAuth } from "better-auth"
+    import { sso } from "@better-auth/sso"
+
+    const auth = betterAuth({
+      plugins: [
+        sso()
+      ]
+    })
+    ```
+  </Step>
+
+  <Step>
+    ### Migrate the database
+
+    ```bash
+    npx auth migrate
+    ```
+  </Step>
+
+  <Step>
+    ### Add the client plugin
+
+    ```ts title="auth-client.ts"
+    import { createAuthClient } from "better-auth/client"
+    import { ssoClient } from "@better-auth/sso/client"
+
+    const authClient = createAuthClient({
+      plugins: [
+        ssoClient()
+      ]
+    })
+    ```
+  </Step>
+</Steps>
+
+## Registering providers
+
+### Register an OIDC provider
+
+Better Auth automatically fetches the provider's OIDC discovery document, so most endpoint fields are optional:
+
+<Tabs>
+  <Tab title="Client">
+    ```ts
+    await authClient.sso.register({
+      providerId: "okta",
+      issuer: "https://your-org.okta.com",
+      domain: "yourcompany.com",
+      oidcConfig: {
+        clientId: "your-client-id",
+        clientSecret: "your-client-secret",
+        // authorizationEndpoint, tokenEndpoint, jwksEndpoint are auto-discovered
+      },
+    })
+    ```
+  </Tab>
+  <Tab title="Server">
+    ```ts
+    await auth.api.registerSSOProvider({
+      body: {
+        providerId: "okta",
+        issuer: "https://your-org.okta.com",
+        domain: "yourcompany.com",
+        oidcConfig: {
+          clientId: "your-client-id",
+          clientSecret: "your-client-secret",
+        },
+      },
+      headers,
+    })
+    ```
+  </Tab>
+</Tabs>
+
+The redirect callback URL is automatically generated as:
+```
+{baseURL}/api/auth/sso/callback/{providerId}
+```
+
+<Note>
+  Discovery endpoints must be in your `trustedOrigins` configuration. Add the IdP origin: `trustedOrigins: ["https://your-org.okta.com"]`
+</Note>
+
+### Register a SAML provider
+
+<Tabs>
+  <Tab title="Client">
+    ```ts
+    await authClient.sso.register({
+      providerId: "saml-provider",
+      issuer: "https://idp.example.com",
+      domain: "example.com",
+      samlConfig: {
+        entryPoint: "https://idp.example.com/sso",
+        cert: "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----",
+        callbackUrl: "/dashboard",  // your app destination after auth
+        wantAssertionsSigned: true,
+        signatureAlgorithm: "sha256",
+        mapping: {
+          id: "nameID",
+          email: "email",
+          name: "displayName",
+          extraFields: {
+            department: "department",
+            role: "jobTitle",
+          },
+        },
+      },
+    })
+    ```
+  </Tab>
+  <Tab title="Server">
+    ```ts
+    await auth.api.registerSSOProvider({
+      body: {
+        providerId: "saml-provider",
+        issuer: "https://idp.example.com",
+        domain: "example.com",
+        samlConfig: {
+          entryPoint: "https://idp.example.com/sso",
+          cert: "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----",
+          callbackUrl: "/dashboard",
+          wantAssertionsSigned: true,
+          signatureAlgorithm: "sha256",
+        },
+      },
+      headers,
+    })
+    ```
+  </Tab>
+</Tabs>
+
+## Sign in with SSO
+
+```ts
+import { authClient } from "@/lib/auth-client"
+
+// By email domain (most common)
+await authClient.signIn.sso({
+  email: "user@yourcompany.com",
+  callbackURL: "/dashboard",
+})
+
+// By domain
+await authClient.signIn.sso({
+  domain: "yourcompany.com",
+  callbackURL: "/dashboard",
+})
+
+// By provider ID
+await authClient.signIn.sso({
+  providerId: "okta",
+  callbackURL: "/dashboard",
+})
+
+// By organization slug (when provider is linked to an org)
+await authClient.signIn.sso({
+  organizationSlug: "acme-corp",
+  callbackURL: "/dashboard",
+})
+
+// With a login hint
+await authClient.signIn.sso({
+  providerId: "okta",
+  loginHint: "user@yourcompany.com",
+  callbackURL: "/dashboard",
+})
+```
+
+## Provisioning
+
+### User provisioning
+
+Run custom logic whenever a user signs in through SSO:
+
+```ts title="auth.ts"
+sso({
+  provisionUser: async ({ user, userInfo, token, provider }) => {
+    await updateUserProfile(user.id, {
+      department: userInfo.attributes?.department,
+      lastSSOLogin: new Date(),
+    })
+
+    await auditLog.create({
+      userId: user.id,
+      action: "sso_signin",
+      provider: provider.providerId,
+    })
+  },
+})
+```
+
+### Organization provisioning
+
+Automatically add SSO users to organizations:
+
+```ts title="auth.ts"
+sso({
+  organizationProvisioning: {
+    disabled: false,
+    defaultRole: "member",
+    getRole: async ({ user, userInfo, provider }) => {
+      const jobTitle = userInfo.attributes?.jobTitle
+      if (jobTitle?.toLowerCase().includes("manager")) {
+        return "admin"
+      }
+      return "member"
+    },
+  },
+})
+```
+
+### Linking providers to organizations
+
+```ts
+await auth.api.registerSSOProvider({
+  body: {
+    providerId: "acme-saml",
+    issuer: "https://acme.okta.com",
+    domain: "acmecorp.com",
+    organizationId: "org_acme_id",  // link to this org
+    samlConfig: { /* ... */ },
+  },
+  headers,
+})
+```
+
+Users from `acmecorp.com` signing in through this provider are automatically added to the Acme Corp organization.
+
+## SAML endpoints
+
+The plugin creates these endpoints automatically:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/auth/sso/saml2/sp/metadata?providerId={id}` | Service Provider metadata XML |
+| `POST /api/auth/sso/saml2/callback/{providerId}` | SAML assertion callback |
+| `GET /api/auth/sso/saml2/callback/{providerId}` | IdP-initiated SSO redirect |
+
+### Get SP metadata
+
+```ts
+const response = await auth.api.spMetadata({
+  query: { providerId: "saml-provider", format: "xml" },
+})
+const metadataXML = await response.text()
+```
+
+## SAML security
+
+### InResponseTo validation
+
+Prevent replay attacks and unsolicited responses:
+
+```ts title="auth.ts"
+sso({
+  saml: {
+    enableInResponseToValidation: true,
+    allowIdpInitiated: false,    // disable IdP-initiated SSO for stricter security
+    requestTTL: 10 * 60 * 1000, // 10 minutes
+  },
+})
+```
+
+### Timestamp validation
+
+```ts title="auth.ts"
+sso({
+  saml: {
+    clockSkew: 60 * 1000,    // 1 minute tolerance
+    requireTimestamps: true, // reject assertions without timestamps (SAML2Int)
+  },
+})
+```
+
+### Algorithm validation
+
+```ts title="auth.ts"
+sso({
+  saml: {
+    algorithms: {
+      onDeprecated: "reject", // "warn" (default) | "reject" | "allow"
+    },
+    maxResponseSize: 512 * 1024, // 512KB
+  },
+})
+```
+
+<Note>
+  Replay protection (assertion ID deduplication) is always enabled and cannot be disabled.
+</Note>
+
+## OIDC discovery
+
+Better Auth automatically fetches the IdP’s discovery document from `{issuer}/.well-known/openid-configuration`. The following fields are auto-discovered:
+
+- `authorizationEndpoint`
+- `tokenEndpoint`
+- `jwksEndpoint`
+- `userInfoEndpoint`
+- `discoveryEndpoint`
+- `tokenEndpointAuthentication`
+
+Explicitly set fields always override discovered values.
+
+### Discovery errors
+
+| Error Code | Meaning |
+|------------|---------|
+| `issuer_mismatch` | IdP’s discovery document has a different issuer |
+| `discovery_incomplete` | Required fields are missing |
+| `discovery_not_found` | Discovery endpoint returned 404 |
+| `discovery_timeout` | IdP did not respond in time |
+| `discovery_untrusted_origin` | Discovery URL not in `trustedOrigins` |
+| `unsupported_token_auth_method` | IdP uses an unsupported token auth method |
+
+## Domain verification
+
+Enable domain verification to require ownership proof before trusting SSO providers:
+
+```ts title="auth.ts"
+sso({
+  domainVerification: { enabled: true },
+})
+```
+
+Verification flow:
+
+<Steps>
+  <Step>
+    Register the provider — a verification token is returned in the response.
+  </Step>
+  <Step>
+    Add a DNS TXT record: `_better-auth-token-{providerId}` with the token value.
+  </Step>
+  <Step>
+    Submit a verification request:
+    ```ts
+    await authClient.sso.verifyDomain({ providerId: "acme-corp" })
+    ```
+  </Step>
+</Steps>
+
+Verified domains also enable automatic account linking: if a user signs in through an SSO provider and an account with the same email already exists, the accounts are linked automatically.
+
+## Schema
+
+The plugin creates an `ssoProvider` table:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `string` | Primary key |
+| `issuer` | `string` | OIDC issuer URL |
+| `domain` | `string` | Email domain for this provider |
+| `providerId` | `string` | Unique provider identifier |
+| `oidcConfig` | `string` | OIDC configuration (JSON) |
+| `samlConfig` | `string` | SAML configuration (JSON) |
+| `userId` | `string` | Owner user ID |
+| `organizationId` | `string` | Linked organization ID (optional) |
+| `domainVerified` | `boolean` | Domain verification status (when enabled) |

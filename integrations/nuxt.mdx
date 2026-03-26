@@ -1,0 +1,124 @@
+---
+title: Nuxt integration
+description: Integrate Better Auth with Nuxt using server routes and Vue composables.
+---
+
+Better Auth integrates with Nuxt through a server event handler and a Vue-aware auth client. Before you start, make sure you have a Better Auth instance configured. If you haven't done that yet, check out the [installation](/installation).
+
+## Create an API route
+
+Create a catch-all server route at `server/api/auth/[...all].ts`. Use Nuxt's `defineEventHandler` and `toWebRequest` helpers to bridge the Nitro request into Better Auth's web-standard handler.
+
+```typescript server/api/auth/[...all].ts
+import { auth } from "~/lib/auth";
+
+export default defineEventHandler((event) => {
+  return auth.handler(toWebRequest(event));
+});
+```
+
+<Note>
+  You can change the base path in your Better Auth configuration, but `/api/auth` is the recommended default.
+</Note>
+
+## Create a client
+
+Create an auth client instance and export it from a shared module. Import from `better-auth/vue` to get Vue-specific reactive helpers.
+
+```typescript lib/auth-client.ts
+import { createAuthClient } from "better-auth/vue";
+
+export const authClient = createAuthClient({
+  // optional client configuration
+});
+```
+
+### useSession composable
+
+The `useSession` composable returns a reactive reference to the current session. Use it directly in component `<script setup>` blocks.
+
+```vue components/UserMenu.vue
+<script setup lang="ts">
+import { authClient } from "~/lib/auth-client";
+
+const session = authClient.useSession();
+</script>
+
+<template>
+  <div>
+    <button
+      v-if="!session?.data"
+      @click="() => authClient.signIn.social({ provider: 'github' })"
+    >
+      Continue with GitHub
+    </button>
+    <div v-else>
+      <pre>{{ session.data }}</pre>
+      <button @click="authClient.signOut()">Sign out</button>
+    </div>
+  </div>
+</template>
+```
+
+### SSR usage
+
+When using Nuxt SSR, pass `useFetch` to `useSession` so the session is fetched on the server and hydrated on the client without an extra round-trip.
+
+```vue pages/index.vue
+<script setup lang="ts">
+import { authClient } from "~/lib/auth-client";
+
+const { data: session } = await authClient.useSession(useFetch);
+</script>
+
+<template>
+  <p>{{ session }}</p>
+</template>
+```
+
+## Server-side session access
+
+The `auth.api` object exposes every Better Auth endpoint as a callable function. Access the session from any server route by passing the event headers.
+
+```typescript server/api/me.ts
+import { auth } from "~/lib/auth";
+
+export default defineEventHandler(async (event) => {
+  const session = await auth.api.getSession({
+    headers: event.headers,
+  });
+
+  if (!session) {
+    throw createError({ statusCode: 401, message: "Unauthorized" });
+  }
+
+  return {
+    user: session.user,
+    session: session.session,
+  };
+});
+```
+
+## Route middleware
+
+Use the auth client inside a Nuxt route middleware to protect pages. Calling `useSession` with `useFetch` ensures the session check runs on the server during SSR.
+
+```typescript middleware/auth.global.ts
+import { authClient } from "~/lib/auth-client";
+
+export default defineNuxtRouteMiddleware(async (to) => {
+  const { data: session } = await authClient.useSession(useFetch);
+
+  if (!session.value && to.path === "/dashboard") {
+    return navigateTo("/");
+  }
+});
+```
+
+## Resources
+
+- [Nuxt and NuxtHub example](https://github.com/atinux/nuxthub-better-auth) on GitHub
+- [NuxtZzle — Nuxt + Drizzle ORM example](https://github.com/leamsigc/nuxt-better-auth-drizzle) on GitHub
+- [Nuxt example](https://stackblitz.com/github/better-auth/examples/tree/main/nuxt-example) on StackBlitz
+- [NuxSaaS](https://github.com/NuxSaaS/NuxSaaS) — full-stack SaaS starter kit
+- [NuxtOne](https://github.com/nuxtone/nuxt-one) — Nuxt starter for AIaaS applications

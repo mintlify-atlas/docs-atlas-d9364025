@@ -1,0 +1,105 @@
+---
+title: Express integration
+description: Integrate Better Auth with Express v4 and v5, including CORS and session access.
+---
+
+Better Auth integrates with Express using the `toNodeHandler` adapter from `better-auth/node`. Before you start, make sure you have a Better Auth instance configured. If you haven't done that yet, check out the [installation](/installation).
+
+<Note>
+  CommonJS (CJS) is not supported. Use ECMAScript Modules (ESM) by setting `"type": "module"` in your `package.json` or configuring your `tsconfig.json` to target ES modules.
+</Note>
+
+## Mount the handler
+
+Create a catch-all route for `/api/auth/*` and pass it to `toNodeHandler`. Mount any `express.json()` middleware **after** the Better Auth handler — placing `express.json()` before it will cause the client to hang on pending requests.
+
+<Tabs>
+  <Tab title="Express v4">
+    ```typescript server.ts
+    import express from "express";
+    import { toNodeHandler } from "better-auth/node";
+    import { auth } from "./auth";
+
+    const app = express();
+    const port = 3005;
+
+    app.all("/api/auth/*", toNodeHandler(auth));
+
+    // Mount express.json() after the Better Auth handler
+    app.use(express.json());
+
+    app.listen(port, () => {
+      console.log(`Server listening on port ${port}`);
+    });
+    ```
+  </Tab>
+  <Tab title="Express v5">
+    Express v5 uses named wildcard syntax. Replace `*` with `*splat`:
+
+    ```typescript server.ts
+    import express from "express";
+    import { toNodeHandler } from "better-auth/node";
+    import { auth } from "./auth";
+
+    const app = express();
+    const port = 3005;
+
+    app.all("/api/auth/*splat", toNodeHandler(auth));
+
+    // Mount express.json() after the Better Auth handler
+    app.use(express.json());
+
+    app.listen(port, () => {
+      console.log(`Server listening on port ${port}`);
+    });
+    ```
+  </Tab>
+</Tabs>
+
+After starting your server, send a `GET` request to `/api/auth/ok` to confirm Better Auth is running.
+
+## CORS configuration
+
+Install the `cors` package and register the middleware before your routes:
+
+```typescript server.ts
+import express from "express";
+import cors from "cors";
+import { toNodeHandler } from "better-auth/node";
+import { auth } from "./auth";
+
+const app = express();
+
+app.use(
+  cors({
+    origin: "http://your-frontend-domain.com",
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true,
+  }),
+);
+
+app.all("/api/auth/*", toNodeHandler(auth));
+
+app.use(express.json());
+```
+
+## Accessing the session in routes
+
+Better Auth expects a web-standard `Headers` object. Use the `fromNodeHeaders` helper from `better-auth/node` to convert Express's `req.headers` into the correct format.
+
+```typescript server.ts
+import { fromNodeHeaders } from "better-auth/node";
+import { auth } from "./auth";
+
+app.get("/api/me", async (req, res) => {
+  const session = await auth.api.getSession({
+    headers: fromNodeHeaders(req.headers),
+  });
+
+  if (!session) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  return res.json(session);
+});
+```

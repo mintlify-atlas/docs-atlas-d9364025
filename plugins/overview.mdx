@@ -1,0 +1,108 @@
+---
+title: Plugins
+description: Extend Better Auth with plugins for authentication, authorization, API management, and more.
+---
+
+Better Auth ships with a rich set of built-in plugins that extend the core framework. Plugins can add new authentication methods, management capabilities, token strategies, integrations with external services, and more.
+
+## How plugins work
+
+Plugins are added to your `betterAuth` configuration via the `plugins` array on the server. Most plugins also provide a corresponding client plugin that exposes typed methods on the auth client.
+
+```ts title="auth.ts"
+import { betterAuth } from "better-auth"
+import { organization, admin } from "better-auth/plugins"
+
+export const auth = betterAuth({
+  // ... other config
+  plugins: [
+    organization(),
+    admin(),
+  ]
+})
+```
+
+## Adding client plugins
+
+Client plugins are added to `createAuthClient` using the same `plugins` array. They expose additional methods under plugin-specific namespaces.
+
+```ts title="auth-client.ts"
+import { createAuthClient } from "better-auth/client"
+import { organizationClient, adminClient } from "better-auth/client/plugins"
+
+export const authClient = createAuthClient({
+  plugins: [
+    organizationClient(),
+    adminClient(),
+  ]
+})
+
+// Plugin methods are available under their namespace:
+await authClient.organization.create({ name: "Acme", slug: "acme" })
+await authClient.admin.listUsers({ query: { limit: 10 } })
+```
+
+<Note>
+  After adding a plugin that requires database changes, run `npx auth migrate` or `npx auth generate` to update your schema.
+</Note>
+
+## Available plugins
+
+### Authentication
+
+<CardGroup cols={2}>
+  <Card title="Two-Factor Authentication" href="/authentication/two-factor">
+    Add TOTP, SMS, or backup code two-factor authentication to your app.
+  </Card>
+  <Card title="Passkey" href="/authentication/passkey">
+    WebAuthn/passkey support for passwordless biometric authentication.
+  </Card>
+  <Card title="Magic Link" href="/authentication/magic-link">
+    Passwordless email magic link sign-in flows.
+  </Card>
+  <Card title="Phone Number" href="/authentication/phone-number">
+    Phone number-based authentication with SMS verification.
+  </Card>
+  <Card title="Anonymous" href="/plugins/anonymous">
+    Allow users to authenticate without providing any personal information.
+  </Card>
+  <Card title="Username" href="/authentication/username">
+    Username and password authentication alongside email.
+  </Card>
+  <Card title="Generic OAuth" href="/plugins/generic-oauth">
+    Connect to any OAuth 2.0 or OIDC provider with a unified interface.
+  </Card>
+</CardGroup>
+
+### Authorization & Management
+
+<CardGroup cols={2}>
+  <Card title="Organization" href="/plugins/organization">
+    Multi-tenant organization management with roles, invitations, and access control.
+  </Card>
+  <Card title="Admin" href="/plugins/admin">
+    Administrative tools for user management, banning, and impersonation.
+  </Card>
+  <Card title="SSO" href="/plugins/sso">
+    Enterprise Single Sign-On via SAML 2.0 and OIDC providers.
+  </Card>
+</CardGroup>
+
+### API & Tokens
+
+<CardGroup cols={2}>
+  <Card title="JWT" href="/plugins/jwt">
+    Issue and verify JSON Web Tokens with a JWKS endpoint for service-to-service auth.
+  </Card>
+  <Card title="API Key" href="/plugins/api-key">
+    Create, manage, and verify API keys for programmatic access.
+  </Card>
+</CardGroup>
+
+### OAuth & OIDC Providers
+
+<CardGroup cols={2}>
+  <Card title="OIDC Provider" href="/plugins/oidc-provider">
+    Turn Better Auth into a full OpenID Connect identity provider.
+  </Card>
+</CardGroup>

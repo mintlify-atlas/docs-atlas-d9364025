@@ -1,0 +1,594 @@
+---
+title: Organization
+description: Multi-tenant organization management with roles, invitations, teams, and access control.
+---
+
+The Organization plugin provides everything you need to support multi-tenant applications: organizations, team management, member invitations, role-based permissions, and fine-grained access control.
+
+## Installation
+
+<Steps>
+  <Step>
+    ### Add the plugin to your auth config
+
+    ```ts title="auth.ts"
+    import { betterAuth } from "better-auth"
+    import { organization } from "better-auth/plugins"
+
+    export const auth = betterAuth({
+      plugins: [
+        organization()
+      ]
+    })
+    ```
+  </Step>
+
+  <Step>
+    ### Migrate the database
+
+    Run the migration or generate the schema to add the necessary tables.
+
+    <Tabs>
+      <Tab title="migrate">
+        ```bash
+        npx auth migrate
+        ```
+      </Tab>
+      <Tab title="generate">
+        ```bash
+        npx auth generate
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step>
+    ### Add the client plugin
+
+    ```ts title="auth-client.ts"
+    import { createAuthClient } from "better-auth/client"
+    import { organizationClient } from "better-auth/client/plugins"
+
+    export const authClient = createAuthClient({
+      plugins: [
+        organizationClient()
+      ]
+    })
+    ```
+  </Step>
+</Steps>
+
+## Organizations
+
+### Create an organization
+
+```ts
+const { data, error } = await authClient.organization.create({
+  name: "My Organization",
+  slug: "my-org",
+  logo: "https://example.com/logo.png", // optional
+})
+```
+
+By default, any authenticated user can create an organization. To restrict creation, configure `allowUserToCreateOrganization`:
+
+```ts title="auth.ts"
+import { betterAuth } from "better-auth"
+import { organization } from "better-auth/plugins"
+
+export const auth = betterAuth({
+  plugins: [
+    organization({
+      allowUserToCreateOrganization: async (user) => {
+        const subscription = await getSubscription(user.id)
+        return subscription.plan === "pro"
+      },
+    }),
+  ],
+})
+```
+
+### List organizations
+
+<Tabs>
+  <Tab title="React">
+    ```tsx
+    import { authClient } from "@/lib/auth-client"
+
+    function App() {
+      const { data: organizations } = authClient.useListOrganizations()
+      return (
+        <div>
+          {organizations?.map((org) => (
+            <p key={org.id}>{org.name}</p>
+          ))}
+        </div>
+      )
+    }
+    ```
+  </Tab>
+  <Tab title="Server">
+    ```ts
+    const organizations = await authClient.organization.list()
+    ```
+  </Tab>
+</Tabs>
+
+### Active organization
+
+The active organization is the workspace the user is currently working in. Set it with:
+
+```ts
+await authClient.organization.setActive({
+  organizationId: "org-id",
+})
+```
+
+Retrieve it reactively:
+
+<Tabs>
+  <Tab title="React">
+    ```tsx
+    function App() {
+      const { data: activeOrganization } = authClient.useActiveOrganization()
+      return <p>{activeOrganization?.name}</p>
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Get full organization details
+
+```ts
+const { data: org } = await authClient.organization.getFullOrganization({
+  organizationId: "org-id",   // optional, defaults to active org
+  membersLimit: 100,           // optional
+})
+```
+
+### Update an organization
+
+```ts
+await authClient.organization.update({
+  organizationId: "org-id",
+  data: {
+    name: "Updated Name",
+    slug: "updated-slug",
+    logo: "https://example.com/new-logo.png",
+  },
+})
+```
+
+### Delete an organization
+
+```ts
+await authClient.organization.delete({
+  organizationId: "org-id",
+})
+```
+
+To disable deletion entirely:
+
+```ts title="auth.ts"
+organization({
+  disableOrganizationDeletion: true,
+})
+```
+
+## Invitations
+
+### Set up invitation emails
+
+Provide a `sendInvitationEmail` callback so Better Auth can send invitation emails:
+
+```ts title="auth.ts"
+import { betterAuth } from "better-auth"
+import { organization } from "better-auth/plugins"
+
+export const auth = betterAuth({
+  plugins: [
+    organization({
+      async sendInvitationEmail(data) {
+        const inviteLink = `https://example.com/accept-invitation/${data.id}`
+        await sendEmail({
+          to: data.email,
+          subject: `Join ${data.organization.name}`,
+          body: `You've been invited by ${data.inviter.user.name}. Click here: ${inviteLink}`,
+        })
+      },
+    }),
+  ],
+})
+```
+
+### Invite a member
+
+```ts
+await authClient.organization.inviteMember({
+  email: "colleague@example.com",
+  role: "member",              // "owner" | "admin" | "member"
+  organizationId: "org-id",   // optional, defaults to active org
+})
+```
+
+### Accept an invitation
+
+On the page that handles the invitation link:
+
+```ts
+await authClient.organization.acceptInvitation({
+  invitationId: "invitation-id",  // from the URL
+})
+```
+
+<Note>
+  The user must be signed in before accepting an invitation. If `requireEmailVerificationOnInvitation` is enabled, their email must also be verified.
+</Note>
+
+### Other invitation actions
+
+```ts
+// Cancel a sent invitation (as the inviter)
+await authClient.organization.cancelInvitation({ invitationId: "id" })
+
+// Reject a received invitation
+await authClient.organization.rejectInvitation({ invitationId: "id" })
+
+// Get invitation details
+await authClient.organization.getInvitation({ id: "id" })
+
+// List invitations for the active org
+await authClient.organization.listInvitations({ organizationId: "org-id" })
+
+// List invitations for the current user
+await authClient.organization.listUserInvitations()
+```
+
+## Members
+
+### List members
+
+```ts
+const { data } = await authClient.organization.listMembers({
+  organizationId: "org-id",   // optional
+  limit: 50,
+  offset: 0,
+  sortBy: "createdAt",
+  sortDirection: "desc",
+})
+```
+
+### Update a member's role
+
+```ts
+await authClient.organization.updateMemberRole({
+  memberId: "member-id",
+  role: "admin",
+  organizationId: "org-id",   // optional
+})
+```
+
+### Remove a member
+
+```ts
+await authClient.organization.removeMember({
+  memberIdOrEmail: "user@example.com",
+  organizationId: "org-id",   // optional
+})
+```
+
+### Add a member directly (server-only)
+
+```ts
+await auth.api.addMember({
+  body: {
+    userId: "user-id",
+    role: "member",
+    organizationId: "org-id",
+  },
+})
+```
+
+### Leave an organization
+
+```ts
+await authClient.organization.leave({
+  organizationId: "org-id",
+})
+```
+
+## Roles and permissions
+
+### Default roles
+
+The organization plugin ships with three built-in roles:
+
+| Role | Capabilities |
+|------|--------------|
+| `owner` | Full control, including deleting the organization and transferring ownership |
+| `admin` | Full control except deleting the organization or changing the owner |
+| `member` | Read-only access to organization data |
+
+<Note>
+  A user can have multiple roles. Multiple roles are stored as comma-separated strings in the database.
+</Note>
+
+### Default permissions
+
+| Resource | Actions |
+|----------|---------|
+| `organization` | `update`, `delete` |
+| `member` | `create`, `update`, `delete` |
+| `invitation` | `create`, `cancel` |
+
+### Custom permissions
+
+<Steps>
+  <Step>
+    #### Create an access controller
+
+    ```ts title="permissions.ts"
+    import { createAccessControl } from "better-auth/plugins/access"
+
+    const statement = {
+      project: ["create", "share", "update", "delete"],
+    } as const
+
+    export const ac = createAccessControl(statement)
+    ```
+
+    <Warning>
+      Import from `better-auth/plugins/access` (not `better-auth/plugins`) to keep bundle sizes small.
+    </Warning>
+  </Step>
+
+  <Step>
+    #### Define roles
+
+    ```ts title="permissions.ts"
+    import { createAccessControl } from "better-auth/plugins/access"
+    import { defaultStatements, adminAc } from "better-auth/plugins/organization/access"
+
+    const statement = {
+      ...defaultStatements,
+      project: ["create", "share", "update", "delete"],
+    } as const
+
+    export const ac = createAccessControl(statement)
+
+    export const member = ac.newRole({
+      project: ["create"],
+    })
+
+    export const admin = ac.newRole({
+      project: ["create", "update"],
+      ...adminAc.statements,
+    })
+
+    export const owner = ac.newRole({
+      project: ["create", "update", "delete"],
+      ...adminAc.statements,
+    })
+    ```
+  </Step>
+
+  <Step>
+    #### Pass roles to the plugin
+
+    ```ts title="auth.ts"
+    import { betterAuth } from "better-auth"
+    import { organization } from "better-auth/plugins"
+    import { ac, owner, admin, member } from "@/auth/permissions"
+
+    export const auth = betterAuth({
+      plugins: [
+        organization({
+          ac,
+          roles: { owner, admin, member },
+        }),
+      ],
+    })
+    ```
+
+    ```ts title="auth-client.ts"
+    import { createAuthClient } from "better-auth/client"
+    import { organizationClient } from "better-auth/client/plugins"
+    import { ac, owner, admin, member } from "@/auth/permissions"
+
+    export const authClient = createAuthClient({
+      plugins: [
+        organizationClient({
+          ac,
+          roles: { owner, admin, member },
+        }),
+      ],
+    })
+    ```
+  </Step>
+</Steps>
+
+### Check permissions
+
+**From the client (async, server-verified):**
+
+```ts
+const { data: canCreate } = await authClient.organization.hasPermission({
+  permissions: {
+    project: ["create"],
+  },
+})
+```
+
+**From the server:**
+
+```ts
+await auth.api.hasPermission({
+  headers: await headers(),
+  body: {
+    permissions: {
+      project: ["create"],
+    },
+  },
+})
+```
+
+**Client-side role check (synchronous, no network call):**
+
+```ts
+const canDelete = authClient.organization.checkRolePermission({
+  permissions: { organization: ["delete"] },
+  role: "admin",
+})
+```
+
+<Warning>
+  `checkRolePermission` runs synchronously on the client and does not include dynamic roles. Use `hasPermission` for authoritative checks.
+</Warning>
+
+## Lifecycle hooks
+
+You can run custom logic before and after organization operations using `organizationHooks`.
+
+### Organization hooks
+
+```ts title="auth.ts"
+organization({
+  organizationHooks: {
+    beforeCreateOrganization: async ({ organization, user }) => {
+      return {
+        data: {
+          ...organization,
+          metadata: { customField: "value" },
+        },
+      }
+    },
+    afterCreateOrganization: async ({ organization, member, user }) => {
+      await setupDefaultResources(organization.id)
+    },
+    beforeUpdateOrganization: async ({ organization, user, member }) => {
+      return { data: { ...organization } }
+    },
+    afterUpdateOrganization: async ({ organization }) => {
+      await syncToExternalSystem(organization)
+    },
+  },
+})
+```
+
+### Member hooks
+
+```ts title="auth.ts"
+organization({
+  organizationHooks: {
+    beforeAddMember: async ({ member, user, organization }) => {
+      return { data: { ...member } }
+    },
+    afterAddMember: async ({ member, user, organization }) => {
+      await sendWelcomeEmail(user.email, organization.name)
+    },
+    beforeRemoveMember: async ({ member, user, organization }) => {
+      await cleanupUserResources(user.id, organization.id)
+    },
+    afterRemoveMember: async ({ member, user, organization }) => {
+      await logMemberRemoval(user.id, organization.id)
+    },
+    beforeUpdateMemberRole: async ({ member, newRole, user, organization }) => {
+      return { data: { role: newRole } }
+    },
+    afterUpdateMemberRole: async ({ member, previousRole, user, organization }) => {
+      await logRoleChange(user.id, previousRole, member.role)
+    },
+  },
+})
+```
+
+### Invitation hooks
+
+```ts title="auth.ts"
+organization({
+  organizationHooks: {
+    beforeCreateInvitation: async ({ invitation, inviter, organization }) => {
+      const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7) // 7 days
+      return { data: { ...invitation, expiresAt } }
+    },
+    afterCreateInvitation: async ({ invitation, inviter, organization }) => {
+      await sendCustomInvitationEmail(invitation, organization)
+    },
+    afterAcceptInvitation: async ({ invitation, member, user, organization }) => {
+      await setupNewMemberResources(user, organization)
+    },
+  },
+})
+```
+
+### Hook error handling
+
+Throwing an error in a `before` hook aborts the operation:
+
+```ts
+import { APIError } from "better-auth/api"
+
+organization({
+  organizationHooks: {
+    beforeAddMember: async ({ member, user, organization }) => {
+      const violations = await checkUserViolations(user.id)
+      if (violations.length > 0) {
+        throw new APIError("BAD_REQUEST", {
+          message: "User has pending violations and cannot join organizations",
+        })
+      }
+    },
+  },
+})
+```
+
+## Dynamic access control
+
+Dynamic access control lets you create and manage roles at runtime, stored in the database rather than defined in code.
+
+```ts title="auth.ts"
+organization({
+  ac,
+  dynamicAccessControl: {
+    enabled: true,
+    maximumRolesPerOrganization: 10, // optional limit
+  },
+})
+```
+
+```ts title="auth-client.ts"
+organizationClient({
+  dynamicAccessControl: { enabled: true },
+})
+```
+
+### Create a dynamic role
+
+```ts
+await authClient.organization.createRole({
+  role: "billing-manager",
+  permission: {
+    project: ["create", "update"],
+  },
+  organizationId: "org-id",
+})
+```
+
+### Manage dynamic roles
+
+```ts
+// List roles
+await authClient.organization.listOrgRoles({ organizationId: "org-id" })
+
+// Get a specific role
+await authClient.organization.getOrgRole({ roleName: "billing-manager" })
+
+// Update a role
+await authClient.organization.updateOrgRole({
+  roleName: "billing-manager",
+  data: { permission: { project: ["create", "update", "delete"] } },
+})
+
+// Delete a role
+await authClient.organization.deleteRole({ roleName: "billing-manager" })
+```

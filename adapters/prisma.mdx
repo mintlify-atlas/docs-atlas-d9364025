@@ -1,0 +1,199 @@
+---
+title: Prisma
+description: Connect Better Auth to your database using Prisma ORM.
+---
+
+Prisma is a type-safe database toolkit for TypeScript. Better Auth ships a first-class Prisma adapter that supports SQLite, PostgreSQL, MySQL, CockroachDB, SQL Server, and MongoDB via Prisma.
+
+## Installation
+
+<Steps>
+  <Step title="Install Prisma and the Prisma Client">
+
+    <Tabs>
+      <Tab title="npm">
+        ```bash
+        npm install @prisma/client
+        npm install --save-dev prisma
+        ```
+      </Tab>
+      <Tab title="pnpm">
+        ```bash
+        pnpm add @prisma/client
+        pnpm add -D prisma
+        ```
+      </Tab>
+      <Tab title="yarn">
+        ```bash
+        yarn add @prisma/client
+        yarn add --dev prisma
+        ```
+      </Tab>
+      <Tab title="bun">
+        ```bash
+        bun add @prisma/client
+        bun add -d prisma
+        ```
+      </Tab>
+    </Tabs>
+
+  </Step>
+  <Step title="Configure the adapter">
+
+    Import `prismaAdapter` from `better-auth/adapters/prisma` and pass a `PrismaClient` instance:
+
+    ```typescript title="auth.ts"
+    import { betterAuth } from "better-auth";
+    import { prismaAdapter } from "better-auth/adapters/prisma";
+    import { PrismaClient } from "@prisma/client";
+
+    const prisma = new PrismaClient();
+
+    export const auth = betterAuth({
+      database: prismaAdapter(prisma, {
+        provider: "postgresql", // "sqlite" | "postgresql" | "mysql" | "cockroachdb" | "sqlserver" | "mongodb"
+      }),
+    });
+    ```
+
+  </Step>
+</Steps>
+
+<Warning>
+  Starting from Prisma 7, the `output` path field is required in `schema.prisma`. If you configured a custom output path (e.g. `output = "../src/generated/prisma"`), import `PrismaClient` from that location instead of `@prisma/client`.
+</Warning>
+
+## Configuration options
+
+The `prismaAdapter` function accepts a `PrismaClient` instance and a config object:
+
+| Option | Type | Description |
+| --- | --- | --- |
+| `provider` | `"sqlite" \| "postgresql" \| "mysql" \| "cockroachdb" \| "sqlserver" \| "mongodb"` | The database provider. Required. |
+| `usePlural` | `boolean` | Set to `true` when your Prisma models use plural names. Defaults to `false`. |
+| `debugLogs` | `boolean` | Enable verbose adapter logging. Defaults to `false`. |
+| `transaction` | `boolean` | Wrap multi-step operations in a Prisma transaction. Defaults to `false`. |
+
+## Prisma schema
+
+The Better Auth CLI generates the required Prisma schema models based on your configuration and plugins.
+
+```bash
+npx auth@latest generate
+```
+
+Schema generation is supported. Schema migration must be run separately through Prisma:
+
+```bash
+npx prisma migrate dev
+```
+
+### Core schema
+
+The schema below is the baseline required by Better Auth. The CLI generates this for you, including `@relation` directives needed for experimental joins.
+
+```prisma title="schema.prisma"
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id
+  name          String
+  email         String
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  sessions      Session[]
+  accounts      Account[]
+
+  @@unique([email])
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([token])
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+```
+
+<Note>
+  The `@@map` directives keep Prisma model names in PascalCase while mapping to the lowercase table names Better Auth expects.
+</Note>
+
+## Applying migrations
+
+After generating or editing your schema, run Prisma Migrate to apply the changes:
+
+```bash
+npx prisma migrate dev --name init
+```
+
+For production deployments:
+
+```bash
+npx prisma migrate deploy
+```
+
+## Experimental joins
+
+Enabling joins allows Better Auth to fetch related data in a single query instead of multiple round-trips. Endpoints such as `/get-session` and `/get-full-organization` see 2-3x latency improvements with high-latency databases.
+
+```typescript title="auth.ts"
+export const auth = betterAuth({
+  experimental: { joins: true },
+});
+```
+
+<Warning>
+  Joins require `@relation` directives in your Prisma schema. Run `npx auth@latest generate` with the latest CLI to produce a schema that includes them.
+</Warning>

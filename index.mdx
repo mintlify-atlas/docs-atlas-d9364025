@@ -1,97 +1,85 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Better Auth"
+description: "The most comprehensive authentication framework for TypeScript. Framework-agnostic, extensible, and production-ready."
 ---
 
-## Setting up
+Better Auth is a framework-agnostic authentication and authorization library for TypeScript. It provides a comprehensive set of features out of the box — email/password, social OAuth, passkeys, two-factor auth, multi-tenancy — and includes a rich plugin ecosystem that lets you add advanced functionality with minimal code.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install Better Auth and connect it to your project in minutes.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Basic Usage" icon="play" href="/basic-usage">
+    Learn how to sign users in, manage sessions, and use the client SDK.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Plugins" icon="puzzle-piece" href="/plugins/overview">
+    Extend Better Auth with 2FA, organizations, SSO, passkeys, and more.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="API Reference" icon="code" href="/reference/options">
+    Explore all configuration options and the full public API surface.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## Why Better Auth?
 
-Everything you need to create world-class documentation.
+Authentication in the TypeScript ecosystem is a half-solved problem. Most libraries require significant custom code for anything beyond basic sign-in. Better Auth aims to be the last auth library you'll ever need.
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
+<CardGroup cols={3}>
+  <Card title="Framework agnostic" icon="layer-group">
+    Works with Next.js, Nuxt, SvelteKit, Hono, Express, Expo, and any runtime that supports standard Request/Response.
   </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
+  <Card title="Rich plugin system" icon="plug">
+    Add 2FA, organizations, passkeys, OIDC provider, magic links, SSO, and more with a single line of code.
   </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
+  <Card title="Type-safe by default" icon="shield-check">
+    Full TypeScript support with inferred types across your server and client — no type casting needed.
   </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
+  <Card title="Multiple databases" icon="database">
+    Native adapters for Drizzle, Prisma, MongoDB, SQLite, PostgreSQL, and MySQL.
   </Card>
-</Columns>
+  <Card title="30+ OAuth providers" icon="key">
+    Built-in support for Google, GitHub, Apple, Discord, and dozens more social providers.
+  </Card>
+  <Card title="Enterprise ready" icon="building">
+    Multi-tenant organizations, SCIM provisioning, SAML SSO, and OIDC provider support.
+  </Card>
+</CardGroup>
 
-## Need inspiration?
+## Get started in 5 minutes
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
+<Steps>
+  <Step title="Install Better Auth">
+    ```bash
+    npm install better-auth
+    ```
+  </Step>
+  <Step title="Create your auth instance">
+    ```typescript auth.ts
+    import { betterAuth } from "better-auth";
+
+    export const auth = betterAuth({
+      database: /* your database connection */,
+      emailAndPassword: { enabled: true },
+    });
+    ```
+  </Step>
+  <Step title="Mount the handler">
+    ```typescript app/api/auth/[...all]/route.ts
+    import { auth } from "@/lib/auth";
+    import { toNextJsHandler } from "better-auth/next-js";
+
+    export const { POST, GET } = toNextJsHandler(auth);
+    ```
+  </Step>
+  <Step title="Create a client">
+    ```typescript lib/auth-client.ts
+    import { createAuthClient } from "better-auth/react";
+
+    export const authClient = createAuthClient();
+    ```
+  </Step>
+</Steps>
+
+<Card title="Follow the full installation guide" icon="arrow-right" href="/installation">
+  Get step-by-step instructions including database setup, CLI migration, and framework-specific configuration.
 </Card>

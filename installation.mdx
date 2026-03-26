@@ -1,0 +1,393 @@
+---
+title: Installation
+description: Install Better Auth and configure it in your project step by step.
+---
+
+<Steps>
+
+<Step title="Install the package">
+
+Add Better Auth to your project:
+
+<CodeGroup>
+
+```bash npm
+npm install better-auth
+```
+
+```bash yarn
+yarn add better-auth
+```
+
+```bash pnpm
+pnpm add better-auth
+```
+
+</CodeGroup>
+
+<Info>
+  If you're using a separate client and server setup, install Better Auth in both parts of your project.
+</Info>
+
+</Step>
+
+<Step title="Set environment variables">
+
+Create a `.env` file in the root of your project and add the following:
+
+**Secret key**
+
+A secret value used for encryption and hashing. It must be at least 32 characters and generated with high entropy. You can run `openssl rand -base64 32` to generate one.
+
+```txt .env
+BETTER_AUTH_SECRET=
+```
+
+<Info>
+  Need to rotate your secret later? Use `BETTER_AUTH_SECRETS` (plural) to roll over to a new secret without invalidating existing sessions. See the [`secrets` option](/reference/options#secrets) for details.
+</Info>
+
+**Base URL**
+
+```txt .env
+BETTER_AUTH_URL=http://localhost:3000
+```
+
+</Step>
+
+<Step title="Create your auth instance">
+
+Create a file named `auth.ts` in one of the following locations:
+
+- Project root
+- `lib/` folder
+- `utils/` folder
+
+You can also nest any of these under `src/`, `app/`, or `server/` (e.g. `src/lib/auth.ts`).
+
+Import Better Auth and export your auth instance. The variable must be named `auth` or use a default export.
+
+```ts auth.ts
+import { betterAuth } from "better-auth";
+
+export const auth = betterAuth({
+  // configuration goes here
+});
+```
+
+</Step>
+
+<Step title="Configure your database">
+
+Better Auth requires a database to store user data. You can connect directly or use an ORM adapter.
+
+<Note>
+  You can also run Better Auth in stateless mode by omitting the database option. See [Stateless Session Management](/concepts/session-management#stateless-session-management) for details. Note that most plugins require a database.
+</Note>
+
+**Direct database connection**
+
+<Tabs>
+  <Tab title="SQLite">
+    ```ts auth.ts
+    import { betterAuth } from "better-auth";
+    import Database from "better-sqlite3";
+
+    export const auth = betterAuth({
+      database: new Database("./sqlite.db"),
+    });
+    ```
+  </Tab>
+  <Tab title="PostgreSQL">
+    ```ts auth.ts
+    import { betterAuth } from "better-auth";
+    import { Pool } from "pg";
+
+    export const auth = betterAuth({
+      database: new Pool({
+        // connection options
+      }),
+    });
+    ```
+  </Tab>
+  <Tab title="MySQL">
+    ```ts auth.ts
+    import { betterAuth } from "better-auth";
+    import { createPool } from "mysql2/promise";
+
+    export const auth = betterAuth({
+      database: createPool({
+        // connection options
+      }),
+    });
+    ```
+  </Tab>
+</Tabs>
+
+**ORM adapters**
+
+<Tabs>
+  <Tab title="Drizzle">
+    ```ts auth.ts
+    import { betterAuth } from "better-auth";
+    import { drizzleAdapter } from "better-auth/adapters/drizzle";
+    import { db } from "@/db"; // your Drizzle instance
+
+    export const auth = betterAuth({
+      database: drizzleAdapter(db, {
+        provider: "pg", // or "mysql", "sqlite"
+      }),
+    });
+    ```
+  </Tab>
+  <Tab title="Prisma">
+    ```ts auth.ts
+    import { betterAuth } from "better-auth";
+    import { prismaAdapter } from "better-auth/adapters/prisma";
+    import { PrismaClient } from "@/generated/prisma/client";
+
+    const prisma = new PrismaClient();
+
+    export const auth = betterAuth({
+      database: prismaAdapter(prisma, {
+        provider: "sqlite", // or "mysql", "postgresql"
+      }),
+    });
+    ```
+  </Tab>
+  <Tab title="MongoDB">
+    ```ts auth.ts
+    import { betterAuth } from "better-auth";
+    import { mongodbAdapter } from "better-auth/adapters/mongodb";
+    import { client } from "@/db"; // your MongoDB client
+
+    export const auth = betterAuth({
+      database: mongodbAdapter(client),
+    });
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  If your database is not listed above, see [other supported databases](/adapters/sqlite) or check the full list of ORM adapters.
+</Note>
+
+</Step>
+
+<Step title="Create database tables">
+
+Better Auth includes a CLI to manage the schema required by the library.
+
+- **Generate** — creates an ORM schema or SQL migration file:
+
+  ```bash
+  npx auth@latest generate
+  ```
+
+- **Migrate** — creates the required tables directly in the database (available only for the built-in Kysely adapter):
+
+  ```bash
+  npx auth@latest migrate
+  ```
+
+<Info>
+  If you prefer to create the schema manually, see the core schema in the [database documentation](/concepts/database#core-schema).
+</Info>
+
+</Step>
+
+<Step title="Configure authentication methods">
+
+Configure the authentication methods you want to support. Better Auth has built-in support for email/password and social providers.
+
+```ts auth.ts
+import { betterAuth } from "better-auth";
+
+export const auth = betterAuth({
+  emailAndPassword: {
+    enabled: true,
+  },
+  socialProviders: {
+    github: {
+      clientId: process.env.GITHUB_CLIENT_ID as string,
+      clientSecret: process.env.GITHUB_CLIENT_SECRET as string,
+    },
+  },
+});
+```
+
+<Info>
+  You can add more authentication methods — including [passkeys](/authentication/passkey), [magic links](/authentication/magic-link), and [username](/authentication/username) — through plugins.
+</Info>
+
+</Step>
+
+<Step title="Mount the route handler">
+
+Set up a route handler on your server to handle auth API requests. By default, Better Auth handles requests at `/api/auth/*`.
+
+<Note>
+  Better Auth supports any backend framework that uses standard `Request` and `Response` objects, and provides helper functions for popular frameworks.
+</Note>
+
+<Tabs>
+  <Tab title="Next.js (App Router)">
+    ```ts app/api/auth/[...all]/route.ts
+    import { auth } from "@/lib/auth";
+    import { toNextJsHandler } from "better-auth/next-js";
+
+    export const { POST, GET } = toNextJsHandler(auth);
+    ```
+  </Tab>
+  <Tab title="Next.js (Pages Router)">
+    ```ts pages/api/auth/[...all].ts
+    import { auth } from "@/lib/auth";
+    import { toNodeHandler } from "better-auth/node";
+
+    // Disallow body parsing — Better Auth handles it manually
+    export const config = { api: { bodyParser: false } };
+    export default toNodeHandler(auth.handler);
+    ```
+  </Tab>
+  <Tab title="Nuxt">
+    ```ts server/api/auth/[...all].ts
+    import { auth } from "~/utils/auth";
+
+    export default defineEventHandler((event) => {
+      return auth.handler(toWebRequest(event));
+    });
+    ```
+  </Tab>
+  <Tab title="SvelteKit">
+    ```ts hooks.server.ts
+    import { auth } from "$lib/auth";
+    import { svelteKitHandler } from "better-auth/svelte-kit";
+    import { building } from "$app/environment";
+
+    export async function handle({ event, resolve }) {
+      return svelteKitHandler({ event, resolve, auth, building });
+    }
+    ```
+  </Tab>
+  <Tab title="Hono">
+    ```ts src/index.ts
+    import { Hono } from "hono";
+    import { auth } from "./auth";
+    import { serve } from "@hono/node-server";
+
+    const app = new Hono();
+
+    app.on(["POST", "GET"], "/api/auth/*", (c) => auth.handler(c.req.raw));
+
+    serve(app);
+    ```
+  </Tab>
+  <Tab title="Express">
+    ```ts server.ts
+    import express from "express";
+    import { toNodeHandler } from "better-auth/node";
+    import { auth } from "./auth";
+
+    const app = express();
+    const port = 8000;
+
+    app.all("/api/auth/*", toNodeHandler(auth));
+
+    // Mount express json middleware after Better Auth handler
+    app.use(express.json());
+
+    app.listen(port, () => {
+      console.log(`Better Auth app listening on port ${port}`);
+    });
+    ```
+
+    <Warning>
+      Express v5 changed wildcard route syntax. Use `/{*any}` instead of `/*` for Express v5 compatibility:
+      ```ts
+      app.all('/api/auth/{*any}', toNodeHandler(auth));
+      ```
+    </Warning>
+  </Tab>
+  <Tab title="Expo">
+    ```ts app/api/auth/[...all]+api.ts
+    import { auth } from "@/lib/server/auth";
+
+    const handler = auth.handler;
+    export { handler as GET, handler as POST };
+    ```
+  </Tab>
+</Tabs>
+
+</Step>
+
+<Step title="Create the client instance">
+
+The client SDK lets you interact with the auth server from your frontend. Import `createAuthClient` from the package for your framework.
+
+<Info>
+  If your auth server runs on a different domain than your client, pass the full base URL. If they share the same domain, you can omit `baseURL`.
+</Info>
+
+<Tabs>
+  <Tab title="React">
+    ```ts lib/auth-client.ts
+    import { createAuthClient } from "better-auth/react";
+
+    export const authClient = createAuthClient({
+      baseURL: "http://localhost:3000", // optional if same domain
+    });
+    ```
+  </Tab>
+  <Tab title="Vue">
+    ```ts lib/auth-client.ts
+    import { createAuthClient } from "better-auth/vue";
+
+    export const authClient = createAuthClient({
+      baseURL: "http://localhost:3000", // optional if same domain
+    });
+    ```
+  </Tab>
+  <Tab title="Svelte">
+    ```ts lib/auth-client.ts
+    import { createAuthClient } from "better-auth/svelte";
+
+    export const authClient = createAuthClient({
+      baseURL: "http://localhost:3000", // optional if same domain
+    });
+    ```
+  </Tab>
+  <Tab title="Solid">
+    ```ts lib/auth-client.ts
+    import { createAuthClient } from "better-auth/solid";
+
+    export const authClient = createAuthClient({
+      baseURL: "http://localhost:3000", // optional if same domain
+    });
+    ```
+  </Tab>
+  <Tab title="Vanilla">
+    ```ts lib/auth-client.ts
+    import { createAuthClient } from "better-auth/client";
+
+    export const authClient = createAuthClient({
+      baseURL: "http://localhost:3000", // optional if same domain
+    });
+    ```
+  </Tab>
+</Tabs>
+
+You can also export specific methods directly:
+
+```ts lib/auth-client.ts
+export const { signIn, signUp, useSession } = createAuthClient();
+```
+
+</Step>
+
+<Step title="Done">
+
+You're ready to use Better Auth in your application. Continue to [basic usage](/basic-usage) to learn how to sign users in, manage sessions, and more.
+
+</Step>
+
+</Steps>

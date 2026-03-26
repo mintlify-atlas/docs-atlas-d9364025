@@ -1,28 +1,11 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
-  "name": "Better Auth",
+  "projectType": "framework",
+  "projectName": "Better Auth",
+  "projectDescription": "A framework-agnostic, comprehensive authentication and authorization framework for TypeScript with a rich plugin ecosystem.",
   "theme": "luma",
-  "colors": {
-    "primary": "#3c3c3c",
-    "light": "#e2e2e2",
-    "dark": "#040404"
-  },
-  "favicon": "https://media.brand.dev/171a27cc-fcdb-4a0f-979b-1581090d0c23.jpg",
-  "logo": {
-    "light": "https://media.brand.dev/954020ce-c53e-4d0b-b47c-d0c5f5fe10ce.svg",
-    "dark": "https://media.brand.dev/954020ce-c53e-4d0b-b47c-d0c5f5fe10ce.svg"
-  },
-  "navbar": {
-    "primary": {
-      "type": "github",
-      "href": "https://github.com/better-auth/better-auth"
-    }
-  },
-  "footer": {
-    "socials": {
-      "github": "https://github.com/better-auth/better-auth"
-    }
-  },
+  "primaryColor": "#3c3c3c",
+  "lightColor": "#e2e2e2",
+  "darkColor": "#040404",
   "navigation": {
     "tabs": [
       {
@@ -130,5 +113,31 @@
         ]
       }
     ]
-  }
+  },
+  "keyFeatures": [
+    "Framework-agnostic: works with Next.js, Nuxt, SvelteKit, Hono, Express, Expo, and more",
+    "Comprehensive plugin ecosystem: 2FA, passkey, organization, SSO, OIDC, magic link, and more",
+    "Multiple database adapters: Drizzle, Prisma, MongoDB, SQLite, PostgreSQL, MySQL",
+    "Built-in social OAuth providers: Google, GitHub, Apple, Discord, and 30+ more",
+    "Type-safe client SDK for React, Vue, Svelte, Solid, and vanilla JS",
+    "CLI tool for schema generation and database migration",
+    "Enterprise features: multi-tenant organizations, SCIM provisioning, SAML SSO",
+    "MCP server support for AI assistant integrations"
+  ],
+  "publicApiSurface": [
+    "betterAuth(config) — core auth instance factory",
+    "createAuthClient(config) — type-safe client SDK factory",
+    "betterAuth/react — React hooks (useSession, etc.)",
+    "betterAuth/vue — Vue composables",
+    "betterAuth/svelte — Svelte stores",
+    "betterAuth/plugins — built-in plugin exports (twoFactor, organization, admin, jwt, etc.)",
+    "betterAuth/adapters/drizzle — Drizzle ORM adapter",
+    "betterAuth/adapters/prisma — Prisma ORM adapter",
+    "betterAuth/adapters/mongodb — MongoDB adapter",
+    "betterAuth/next-js — Next.js route handler helper",
+    "betterAuth/node — Node.js handler helper",
+    "betterAuth/svelte-kit — SvelteKit handler helper",
+    "npx auth generate — CLI schema generation",
+    "npx auth migrate — CLI database migration"
+  ]
 }

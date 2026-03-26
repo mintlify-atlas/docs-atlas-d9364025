@@ -1,0 +1,350 @@
+---
+title: Next.js integration
+description: Integrate Better Auth with Next.js App Router, Pages Router, and middleware.
+---
+
+Better Auth integrates with Next.js through dedicated helpers for the App Router, Pages Router, server components, server actions, and middleware. Before you start, make sure you have a Better Auth instance configured. If you haven't done that yet, check out the [installation](/installation).
+
+## Create an API route
+
+<Tabs>
+  <Tab title="App Router">
+    Create a route handler at `app/api/auth/[...all]/route.ts` and re-export the HTTP method handlers produced by `toNextJsHandler`.
+
+    ```typescript app/api/auth/[...all]/route.ts
+    import { auth } from "@/lib/auth";
+    import { toNextJsHandler } from "better-auth/next-js";
+
+    export const { GET, POST } = toNextJsHandler(auth);
+    ```
+
+    <Note>
+      `toNextJsHandler` also exports `PATCH`, `PUT`, and `DELETE` handlers. The destructured form above is the minimal configuration required for most use cases.
+    </Note>
+  </Tab>
+  <Tab title="Pages Router">
+    Create a catch-all API route at `pages/api/auth/[...all].ts`. Use `toNodeHandler` from `better-auth/node` and disable Next.js's built-in body parser.
+
+    ```typescript pages/api/auth/[...all].ts
+    import { toNodeHandler } from "better-auth/node";
+    import { auth } from "@/lib/auth";
+
+    // Disallow body parsing — Better Auth handles it manually
+    export const config = { api: { bodyParser: false } };
+
+    export default toNodeHandler(auth.handler);
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  You can change the base path in your Better Auth configuration, but `/api/auth` is the recommended default.
+</Note>
+
+## Create a client
+
+Create an auth client instance and export it from a shared module. Import from `better-auth/react` to get React-specific helpers such as the `useSession` hook.
+
+```typescript lib/auth-client.ts
+import { createAuthClient } from "better-auth/react";
+
+export const authClient = createAuthClient({
+  // optional client configuration
+});
+```
+
+The client uses [nano-stores](https://github.com/nanostores/nanostores) internally so reactive values re-render components automatically. Network requests use [better-fetch](https://github.com/bekacru/better-fetch), whose options can be forwarded through the client constructor.
+
+### useSession hook
+
+```typescript app/dashboard/page.tsx
+"use client";
+import { authClient } from "@/lib/auth-client";
+
+export default function Dashboard() {
+  const { data: session, isPending } = authClient.useSession();
+
+  if (isPending) return <p>Loading...</p>;
+  if (!session) return <p>Not signed in</p>;
+
+  return <h1>Welcome, {session.user.name}</h1>;
+}
+```
+
+## Server-side session access
+
+The `auth.api` object exposes every Better Auth endpoint as a callable function, including all plugin endpoints.
+
+### Server components (RSC)
+
+```typescript app/dashboard/page.tsx
+import { auth } from "@/lib/auth";
+import { headers } from "next/headers";
+
+export default async function DashboardPage() {
+  const session = await auth.api.getSession({
+    headers: await headers(),
+  });
+
+  if (!session) {
+    return <div>Not authenticated</div>;
+  }
+
+  return (
+    <div>
+      <h1>Welcome, {session.user.name}</h1>
+    </div>
+  );
+}
+```
+
+<Warning>
+  RSCs cannot set cookies. The cookie cache will not be refreshed until the server is interacted with from the client via server actions or route handlers. See [Session Management](/concepts/session-management) for details.
+</Warning>
+
+### Server actions
+
+```typescript app/actions.ts
+import { auth } from "@/lib/auth";
+import { headers } from "next/headers";
+
+export const getUser = async () => {
+  "use server";
+  const session = await auth.api.getSession({
+    headers: await headers(),
+  });
+  return session;
+};
+```
+
+### Server action cookies
+
+When you call functions that set cookies (such as `signInEmail` or `signUpEmail`) inside a server action, cookies are not set automatically because Next.js requires the `cookies` helper from `next/headers`.
+
+Use the `nextCookies` plugin to handle this transparently:
+
+```typescript lib/auth.ts
+import { betterAuth } from "better-auth";
+import { nextCookies } from "better-auth/next-js";
+
+export const auth = betterAuth({
+  // ...your config
+  plugins: [nextCookies()], // must be the last plugin in the array
+});
+```
+
+With the plugin in place, cookie-setting calls work directly from server actions:
+
+```typescript app/actions.ts
+"use server";
+import { auth } from "@/lib/auth";
+
+export const signIn = async () => {
+  await auth.api.signInEmail({
+    body: {
+      email: "user@email.com",
+      password: "password",
+    },
+  });
+};
+```
+
+## Route protection
+
+In Next.js middleware it is recommended to only check for the existence of a session cookie for redirects — making database calls in middleware adds latency to every request. Perform full session validation inside individual pages or route handlers instead.
+
+### Next.js 16+ (Proxy)
+
+Next.js 16 replaces middleware with a "proxy". The Node.js runtime is available by default, enabling full session validation.
+
+<Tabs>
+  <Tab title="Full session validation">
+    ```typescript proxy.ts
+    import { NextRequest, NextResponse } from "next/server";
+    import { headers } from "next/headers";
+    import { auth } from "@/lib/auth";
+
+    export async function proxy(request: NextRequest) {
+      const session = await auth.api.getSession({
+        headers: await headers(),
+      });
+
+      if (!session) {
+        return NextResponse.redirect(new URL("/sign-in", request.url));
+      }
+
+      return NextResponse.next();
+    }
+
+    export const config = {
+      matcher: ["/dashboard"],
+    };
+    ```
+  </Tab>
+  <Tab title="Cookie-only check (faster)">
+    ```typescript proxy.ts
+    import { NextRequest, NextResponse } from "next/server";
+    import { getSessionCookie } from "better-auth/cookies";
+
+    export async function proxy(request: NextRequest) {
+      const sessionCookie = getSessionCookie(request);
+
+      if (!sessionCookie) {
+        return NextResponse.redirect(new URL("/sign-in", request.url));
+      }
+
+      return NextResponse.next();
+    }
+
+    export const config = {
+      matcher: ["/dashboard"],
+    };
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  **Migrating from middleware:** Rename `middleware.ts` to `proxy.ts` and rename the exported function from `middleware` to `proxy`. All Better Auth methods work identically. You can also use the Next.js codemod: `npx @next/codemod@canary middleware-to-proxy .`
+</Note>
+
+### Next.js 15.2.0+ (Node.js runtime middleware)
+
+From Next.js 15.2.0 you can opt into the Node.js runtime in middleware to make database calls directly.
+
+```typescript middleware.ts
+import { NextRequest, NextResponse } from "next/server";
+import { headers } from "next/headers";
+import { auth } from "@/lib/auth";
+
+export async function middleware(request: NextRequest) {
+  const session = await auth.api.getSession({
+    headers: await headers(),
+  });
+
+  if (!session) {
+    return NextResponse.redirect(new URL("/sign-in", request.url));
+  }
+
+  return NextResponse.next();
+}
+
+export const config = {
+  runtime: "nodejs", // required for auth.api calls
+  matcher: ["/dashboard"],
+};
+```
+
+<Warning>
+  Node.js runtime in middleware is experimental before Next.js 16. Consider upgrading to Next.js 16+ for stable proxy support.
+</Warning>
+
+### Next.js 13–15.1.x (Edge runtime middleware)
+
+Edge runtime middleware cannot make database calls. Use cookie-based checks for optimistic redirects, or fetch the session over HTTP.
+
+<Tabs>
+  <Tab title="Cookie check (recommended)">
+    ```typescript middleware.ts
+    import { NextRequest, NextResponse } from "next/server";
+    import { getSessionCookie } from "better-auth/cookies";
+
+    export async function middleware(request: NextRequest) {
+      const sessionCookie = getSessionCookie(request);
+
+      if (!sessionCookie) {
+        return NextResponse.redirect(new URL("/sign-in", request.url));
+      }
+
+      return NextResponse.next();
+    }
+
+    export const config = {
+      matcher: ["/dashboard"],
+    };
+    ```
+
+    If you use a custom cookie name or prefix, pass the options:
+
+    ```typescript
+    const sessionCookie = getSessionCookie(request, {
+      cookieName: "my_session_cookie",
+      cookiePrefix: "my_prefix",
+    });
+    ```
+  </Tab>
+  <Tab title="HTTP fetch">
+    Use [better-fetch](https://better-fetch.vercel.app) (or any fetch library) to call the session endpoint from middleware.
+
+    ```typescript middleware.ts
+    import { betterFetch } from "@better-fetch/fetch";
+    import type { auth } from "@/lib/auth";
+    import { NextRequest, NextResponse } from "next/server";
+
+    type Session = typeof auth.$Infer.Session;
+
+    export async function middleware(request: NextRequest) {
+      const { data: session } = await betterFetch<Session>(
+        "/api/auth/get-session",
+        {
+          baseURL: request.nextUrl.origin,
+          headers: {
+            cookie: request.headers.get("cookie") || "",
+          },
+        },
+      );
+
+      if (!session) {
+        return NextResponse.redirect(new URL("/sign-in", request.url));
+      }
+
+      return NextResponse.next();
+    }
+
+    export const config = {
+      matcher: ["/dashboard"],
+    };
+    ```
+  </Tab>
+  <Tab title="Cookie cache">
+    ```typescript middleware.ts
+    import { NextRequest, NextResponse } from "next/server";
+    import { getCookieCache } from "better-auth/cookies";
+
+    export async function middleware(request: NextRequest) {
+      const session = await getCookieCache(request);
+
+      if (!session) {
+        return NextResponse.redirect(new URL("/sign-in", request.url));
+      }
+
+      return NextResponse.next();
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+  `getSessionCookie` only checks for the **existence** of a session cookie — it does not validate it. Anyone can manually create a cookie to bypass this check. Always validate the session on the server for any protected action or data access.
+</Warning>
+
+### Per-page auth checks
+
+For the strongest security, validate the session inside each protected page:
+
+```typescript app/dashboard/page.tsx
+import { auth } from "@/lib/auth";
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
+
+export default async function DashboardPage() {
+  const session = await auth.api.getSession({
+    headers: await headers(),
+  });
+
+  if (!session) {
+    redirect("/sign-in");
+  }
+
+  return <h1>Welcome, {session.user.name}</h1>;
+}
+```

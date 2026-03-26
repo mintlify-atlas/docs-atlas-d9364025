@@ -1,0 +1,177 @@
+---
+title: Hono integration
+description: Integrate Better Auth with Hono, including CORS configuration and session middleware.
+---
+
+Better Auth integrates with Hono by mounting the auth handler on a wildcard route. Before you start, make sure you have a Better Auth instance configured. If you haven't done that yet, check out the [installation](/installation).
+
+## Mount the handler
+
+Use `app.on` to handle both `GET` and `POST` requests on the `/api/auth/*` path and forward them to `auth.handler`.
+
+```typescript server.ts
+import { Hono } from "hono";
+import { auth } from "./auth";
+import { serve } from "@hono/node-server";
+
+const app = new Hono();
+
+app.on(["POST", "GET"], "/api/auth/*", (c) => {
+  return auth.handler(c.req.raw);
+});
+
+serve(app);
+```
+
+## CORS configuration
+
+Use the `cors` middleware from `hono/cors`. Register it **before** your routes so cross-origin requests are handled before they reach the auth endpoints.
+
+```typescript server.ts
+import { Hono } from "hono";
+import { auth } from "./auth";
+import { serve } from "@hono/node-server";
+import { cors } from "hono/cors";
+
+const app = new Hono();
+
+app.use(
+  "/api/auth/*",
+  cors({
+    origin: "http://localhost:3001", // replace with your frontend origin
+    allowHeaders: ["Content-Type", "Authorization"],
+    allowMethods: ["POST", "GET", "OPTIONS"],
+    exposeHeaders: ["Content-Length"],
+    maxAge: 600,
+    credentials: true,
+  }),
+);
+
+app.on(["POST", "GET"], "/api/auth/*", (c) => {
+  return auth.handler(c.req.raw);
+});
+
+serve(app);
+```
+
+<Warning>
+  CORS middleware must be registered before your routes. If CORS is registered after the route, preflight requests will fail.
+</Warning>
+
+## Session middleware
+
+Add a global middleware that fetches the session and stores the `user` and `session` objects in Hono's context. This lets every downstream route access them without repeating the session lookup.
+
+```typescript server.ts
+import { Hono } from "hono";
+import { auth } from "./auth";
+import { serve } from "@hono/node-server";
+
+const app = new Hono<{
+  Variables: {
+    user: typeof auth.$Infer.Session.user | null;
+    session: typeof auth.$Infer.Session.session | null;
+  };
+}>();
+
+app.use("*", async (c, next) => {
+  const session = await auth.api.getSession({ headers: c.req.raw.headers });
+
+  if (!session) {
+    c.set("user", null);
+    c.set("session", null);
+    await next();
+    return;
+  }
+
+  c.set("user", session.user);
+  c.set("session", session.session);
+  await next();
+});
+
+app.on(["POST", "GET"], "/api/auth/*", (c) => {
+  return auth.handler(c.req.raw);
+});
+
+serve(app);
+```
+
+### Accessing session in routes
+
+```typescript
+app.get("/session", (c) => {
+  const user = c.get("user");
+  const session = c.get("session");
+
+  if (!user) return c.body(null, 401);
+
+  return c.json({ session, user });
+});
+```
+
+## Cross-domain cookies
+
+By default, all Better Auth cookies use `SameSite=Lax`. If your client and server share a subdomain, enable cross-subdomain cookies in your auth config:
+
+```typescript auth.ts
+export const auth = betterAuth({
+  advanced: {
+    crossSubDomainCookies: {
+      enabled: true,
+    },
+  },
+});
+```
+
+If you need fully cross-origin cookies (`SameSite=None`), configure the default cookie attributes:
+
+```typescript auth.ts
+export const auth = betterAuth({
+  advanced: {
+    defaultCookieAttributes: {
+      sameSite: "none",
+      secure: true,
+      partitioned: true, // required by upcoming browser standards for third-party cookies
+    },
+  },
+});
+```
+
+You can also override attributes on individual cookies:
+
+```typescript auth.ts
+export const auth = betterAuth({
+  advanced: {
+    cookies: {
+      sessionToken: {
+        attributes: {
+          sameSite: "none",
+          secure: true,
+          partitioned: true,
+        },
+      },
+    },
+  },
+});
+```
+
+## Hono client configuration
+
+When using the Hono RPC client (`hono/client`) to call Better Auth-protected endpoints, set `credentials: "include"` so the client forwards cookies on cross-origin requests.
+
+```typescript lib/api.ts
+import { hc } from "hono/client";
+import type { AppType } from "./server";
+
+const client = hc<AppType>("http://localhost:8787/", {
+  init: {
+    credentials: "include",
+  },
+});
+
+const response = await client.someProtectedEndpoint.$get();
+```
+
+<Note>
+  `credentials: "include"` must be paired with `credentials: true` in the server's CORS configuration, and the `origin` must be set to a specific domain (not `*`).
+</Note>

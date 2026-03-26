@@ -1,0 +1,156 @@
+---
+title: SQLite
+description: Connect Better Auth to SQLite for local, edge, or embedded database deployments.
+---
+
+SQLite is a lightweight, serverless, self-contained SQL database. Better Auth uses [Kysely](https://kysely.dev/) under the hood for SQLite, which means any database Kysely supports is also supported by Better Auth.
+
+SQLite is a good fit for:
+
+- Local development and testing
+- Serverless edge runtimes (Cloudflare D1)
+- Embedded or single-user applications
+
+## Drivers
+
+Better Auth accepts any of the SQLite drivers listed below. Choose the one that matches your runtime.
+
+### better-sqlite3 (recommended)
+
+The most widely used synchronous SQLite driver for Node.js.
+
+<Steps>
+  <Step title="Install the driver">
+    <Tabs>
+      <Tab title="npm">
+        ```bash
+        npm install better-sqlite3
+        npm install --save-dev @types/better-sqlite3
+        ```
+      </Tab>
+      <Tab title="pnpm">
+        ```bash
+        pnpm add better-sqlite3
+        pnpm add -D @types/better-sqlite3
+        ```
+      </Tab>
+      <Tab title="yarn">
+        ```bash
+        yarn add better-sqlite3
+        yarn add --dev @types/better-sqlite3
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+  <Step title="Configure Better Auth">
+    ```typescript title="auth.ts"
+    import { betterAuth } from "better-auth";
+    import Database from "better-sqlite3";
+
+    export const auth = betterAuth({
+      database: new Database("./sqlite.db"),
+    });
+    ```
+  </Step>
+</Steps>
+
+### Node.js built-in SQLite (experimental)
+
+<Warning>
+  The `node:sqlite` module is experimental and may change at any time. It requires Node.js 22.5.0 or later.
+</Warning>
+
+Starting from Node.js 22.5.0 you can use the built-in SQLite module without installing a package:
+
+```typescript title="auth.ts"
+import { betterAuth } from "better-auth";
+import { DatabaseSync } from "node:sqlite";
+
+export const auth = betterAuth({
+  database: new DatabaseSync("./sqlite.db"),
+});
+```
+
+### Bun built-in SQLite
+
+<Warning>
+  Use `bunx --bun auth@latest generate` (with the `--bun` flag) to prevent type errors related to the `bun:sqlite` module.
+</Warning>
+
+Bun ships with a built-in SQLite module:
+
+```typescript title="auth.ts"
+import { betterAuth } from "better-auth";
+import { Database } from "bun:sqlite";
+
+export const auth = betterAuth({
+  database: new Database("./sqlite.db"),
+});
+```
+
+## Schema generation and migration
+
+The Better Auth CLI can both generate the schema and apply migrations directly to your SQLite file.
+
+<Tabs>
+  <Tab title="migrate">
+    ```bash
+    npx auth@latest migrate
+    ```
+  </Tab>
+  <Tab title="generate">
+    ```bash
+    npx auth@latest generate
+    ```
+  </Tab>
+</Tabs>
+
+Both schema generation and migration are supported for SQLite:
+
+| Command | Supported |
+| --- | --- |
+| `npx auth@latest generate` | Yes |
+| `npx auth@latest migrate` | Yes |
+
+<Note>
+  `generate` produces a SQL file you can inspect and apply manually. `migrate` runs the SQL directly against your database file.
+</Note>
+
+## Cloudflare D1
+
+Cloudflare D1 is a SQLite-compatible edge database. Because D1 can only be accessed from a Cloudflare Worker, the CLI cannot run migrations against it directly. Use programmatic migrations instead:
+
+```typescript title="auth.ts"
+import { env } from "cloudflare:workers";
+import { betterAuth } from "better-auth";
+
+export const auth = betterAuth({
+  database: env.DB, // Cloudflare D1 binding
+});
+```
+
+```typescript title="src/index.ts"
+import { getMigrations } from "better-auth/db/migration";
+import { auth } from "./auth";
+
+// Protect or remove this endpoint in production
+app.post("/migrate", async (c) => {
+  const { runMigrations } = await getMigrations(auth.options);
+  await runMigrations();
+  return c.json({ message: "Migrations completed" });
+});
+```
+
+## Experimental joins
+
+Enabling joins allows Better Auth to use SQL `JOIN` clauses to fetch related data in a single query instead of multiple round-trips.
+
+```typescript title="auth.ts"
+export const auth = betterAuth({
+  experimental: { joins: true },
+});
+```
+
+<Warning>
+  You may need to run migrations after enabling joins, as the feature may require updated schema columns.
+</Warning>

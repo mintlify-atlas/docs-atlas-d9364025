@@ -1,0 +1,144 @@
+---
+title: Magic link
+description: Passwordless authentication via email magic links using the magic link plugin.
+---
+
+The magic link plugin lets users sign in without a password. When a user enters their email, Better Auth emails them a link. Clicking the link authenticates them and creates a session.
+
+## Installation
+
+<Steps>
+  <Step title="Add the server plugin">
+    Import and configure `magicLink` in your auth config. You must provide a `sendMagicLink` function that delivers the link to the user:
+
+    ```ts title="auth.ts"
+    import { betterAuth } from "better-auth";
+    import { magicLink } from "better-auth/plugins";
+
+    export const auth = betterAuth({
+      plugins: [
+        magicLink({
+          sendMagicLink: async ({ email, token, url, metadata }, ctx) => {
+            // Send the url to the user via email
+            await sendEmail({
+              to: email,
+              subject: "Your sign-in link",
+              text: `Sign in here: ${url}`,
+            });
+          },
+        }),
+      ],
+    });
+    ```
+  </Step>
+
+  <Step title="Add the client plugin">
+    Add `magicLinkClient` to your auth client:
+
+    ```ts title="auth-client.ts"
+    import { createAuthClient } from "better-auth/client";
+    import { magicLinkClient } from "better-auth/client/plugins";
+
+    export const authClient = createAuthClient({
+      plugins: [
+        magicLinkClient(),
+      ],
+    });
+    ```
+  </Step>
+</Steps>
+
+## Usage
+
+### Send a magic link
+
+Call `signIn.magicLink` on the client with the user's email address:
+
+```ts title="sign-in.ts"
+import { authClient } from "@/lib/auth-client";
+
+const { data, error } = await authClient.signIn.magicLink({
+  email: "user@example.com",
+  name: "Jane Doe",            // display name — only used on first sign-up
+  callbackURL: "/dashboard",   // redirect after verification
+  newUserCallbackURL: "/welcome", // redirect for new users
+  errorCallbackURL: "/error",  // redirect on verification failure
+  metadata: { inviteId: "abc" }, // forwarded to sendMagicLink callback
+});
+```
+
+<Note>
+  If the email address is not registered and `disableSignUp` is not `true`, the user is automatically signed up on first use.
+</Note>
+
+### Verification flow
+
+When the user clicks the link:
+
+1. Better Auth validates the token.
+2. If valid, the user is authenticated and redirected to `callbackURL`.
+3. If invalid or expired, they are redirected to `callbackURL?error=...` (or `errorCallbackURL` if provided).
+
+<Warning>
+  If no `callbackURL` is provided, the user is redirected to the root URL (`/`).
+</Warning>
+
+### Manual verification
+
+If you need to verify a token yourself (e.g. you built your own link format), call the `magicLink.verify` endpoint:
+
+```ts title="verify.ts"
+import { authClient } from "@/lib/auth-client";
+
+const { data, error } = await authClient.magicLink.verify({
+  token: "<token-from-url>",
+  callbackURL: "/dashboard",
+});
+```
+
+## Server-side `sendMagicLink` callback
+
+The function receives:
+
+| Parameter | Description |
+|-----------|-------------|
+| `email` | The user's email address. |
+| `url` | The full magic link URL to send. Contains the token. |
+| `token` | The raw token, if you want to build a custom URL. |
+| `metadata` | Any extra data passed via `signIn.magicLink`. |
+
+A `ctx` context object is passed as the second argument.
+
+```ts title="auth.ts"
+magicLink({
+  sendMagicLink: async ({ email, url, token, metadata }, ctx) => {
+    await myEmailProvider.send({
+      to: email,
+      subject: "Sign in to My App",
+      html: `<a href="${url}">Sign in</a>`,
+    });
+  },
+})
+```
+
+## Configuration options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `sendMagicLink` | `function` | — | **Required.** Called to send the magic link email. |
+| `expiresIn` | `number` | `300` | Token lifetime in seconds (5 minutes). |
+| `allowedAttempts` | `number` | `1` | Number of times a token can be used before it is invalidated. Set to `Infinity` for unlimited. |
+| `disableSignUp` | `boolean` | `false` | Prevent new user registration via magic link. |
+| `generateToken` | `function` | — | Custom token generator. Receives `email`, returns a string. Must return a cryptographically secure value. |
+| `storeToken` | `string` | `"plain"` | How to store the token: `"plain"`, `"hashed"`, or a custom hasher object. |
+
+### Token expiry example
+
+```ts title="auth.ts"
+magicLink({
+  expiresIn: 600, // 10 minutes
+  sendMagicLink: async ({ email, url }) => {
+    await sendEmail({ to: email, text: url });
+  },
+})
+```

@@ -1,0 +1,261 @@
+---
+title: Hooks
+description: Use before and after hooks to customize endpoint behavior in Better Auth — modify requests, intercept responses, handle cookies, throw errors, and run background tasks.
+---
+
+Hooks let you tap into the lifecycle of any Better Auth endpoint and execute custom logic without writing a full plugin.
+
+<Tip>
+Use hooks when you need to make targeted adjustments to an endpoint's behavior. For reusable logic across many endpoints, consider writing a [plugin](/concepts/plugins) instead.
+</Tip>
+
+## Before hooks
+
+**Before hooks** run before an endpoint executes. Use them to validate requests, modify context, or return early with an error.
+
+### Enforce an email domain restriction
+
+```typescript title="auth.ts"
+import { betterAuth } from "better-auth";
+import { createAuthMiddleware, APIError } from "better-auth/api";
+
+export const auth = betterAuth({
+  hooks: {
+    before: createAuthMiddleware(async (ctx) => {
+      if (ctx.path !== "/sign-up/email") return;
+
+      if (!ctx.body?.email.endsWith("@example.com")) {
+        throw new APIError("BAD_REQUEST", {
+          message: "Email must end with @example.com",
+        });
+      }
+    }),
+  },
+});
+```
+
+### Modify request context
+
+Return a `{ context }` object to replace the context before the endpoint runs:
+
+```typescript title="auth.ts"
+import { betterAuth } from "better-auth";
+import { createAuthMiddleware } from "better-auth/api";
+
+export const auth = betterAuth({
+  hooks: {
+    before: createAuthMiddleware(async (ctx) => {
+      if (ctx.path === "/sign-up/email") {
+        return {
+          context: {
+            ...ctx,
+            body: {
+              ...ctx.body,
+              name: "John Doe",
+            },
+          },
+        };
+      }
+    }),
+  },
+});
+```
+
+## After hooks
+
+**After hooks** run after an endpoint executes. Use them to react to changes or modify the response.
+
+### Notify a channel when a new user registers
+
+```typescript title="auth.ts"
+import { betterAuth } from "better-auth";
+import { createAuthMiddleware } from "better-auth/api";
+import { sendMessage } from "@/lib/notification";
+
+export const auth = betterAuth({
+  hooks: {
+    after: createAuthMiddleware(async (ctx) => {
+      if (ctx.path.startsWith("/sign-up")) {
+        const newSession = ctx.context.newSession;
+        if (newSession) {
+          sendMessage({
+            type: "user-register",
+            name: newSession.user.name,
+          });
+        }
+      }
+    }),
+  },
+});
+```
+
+## The `ctx` object
+
+`createAuthMiddleware` receives a `ctx` object with the following properties:
+
+| Property | Description |
+|----------|-------------|
+| `ctx.path` | Current endpoint path |
+| `ctx.body` | Parsed request body (POST requests) |
+| `ctx.headers` | Request headers |
+| `ctx.request` | The raw request object (may not exist in server-only endpoints) |
+| `ctx.query` | URL query parameters |
+| `ctx.context` | Auth-specific context (session, cookies, adapter, etc.) |
+
+### Sending responses
+
+#### JSON
+
+```typescript
+import { createAuthMiddleware } from "better-auth/api";
+
+const hook = createAuthMiddleware(async (ctx) => {
+  return ctx.json({ message: "Hello World" });
+});
+```
+
+#### Redirects
+
+```typescript
+const hook = createAuthMiddleware(async (ctx) => {
+  throw ctx.redirect("/sign-up/name");
+});
+```
+
+#### Cookies
+
+```typescript
+const hook = createAuthMiddleware(async (ctx) => {
+  ctx.setCookies("my-cookie", "value");
+  await ctx.setSignedCookie("my-signed-cookie", "value", ctx.context.secret, {
+    maxAge: 1000,
+  });
+
+  const cookie = ctx.getCookies("my-cookie");
+  const signedCookie = await ctx.getSignedCookie("my-signed-cookie");
+});
+```
+
+#### Throwing errors
+
+```typescript
+import { createAuthMiddleware, APIError } from "better-auth/api";
+
+const hook = createAuthMiddleware(async (ctx) => {
+  throw new APIError("BAD_REQUEST", {
+    message: "Invalid request",
+  });
+});
+```
+
+## The `ctx.context` object
+
+The `context` property inside `ctx` provides auth-specific data.
+
+### `newSession`
+
+The session created by the endpoint. Only available in **after hooks**.
+
+```typescript
+const hook = createAuthMiddleware(async (ctx) => {
+  const newSession = ctx.context.newSession;
+});
+```
+
+### `returned`
+
+The value returned by the endpoint (a successful response or an `APIError`). Only available in **after hooks**.
+
+```typescript
+const hook = createAuthMiddleware(async (ctx) => {
+  const returned = ctx.context.returned;
+});
+```
+
+### `responseHeaders`
+
+Response headers added by endpoints and hooks that ran before this one.
+
+```typescript
+const hook = createAuthMiddleware(async (ctx) => {
+  const responseHeaders = ctx.context.responseHeaders;
+});
+```
+
+### `authCookies`
+
+Better Auth's predefined cookie configuration:
+
+```typescript
+const hook = createAuthMiddleware(async (ctx) => {
+  const cookieName = ctx.context.authCookies.sessionToken.name;
+});
+```
+
+### `secret`
+
+The auth instance secret: `ctx.context.secret`.
+
+### `password`
+
+Password utilities:
+- `ctx.context.password.hash(password)` — hash a password.
+- `ctx.context.password.verify({ password, hash })` — verify a password against a hash.
+
+### `adapter`
+
+Exposes `findOne`, `findMany`, `create`, `delete`, `update`, and `updateMany`. Prefer using your ORM directly for most queries.
+
+### `internalAdapter`
+
+Higher-level internal calls like `createUser`, `createSession`, and `updateSession`. Useful when you want `databaseHooks` and secondary storage support to apply automatically.
+
+### `generateId`
+
+Generate a new ID: `ctx.context.generateId()`.
+
+### `runInBackground`
+
+Schedule a fire-and-forget task to run after the response is sent. Use for analytics, cleanup, and rate-limit updates:
+
+```typescript title="auth.ts"
+export const auth = betterAuth({
+  hooks: {
+    after: createAuthMiddleware(async (ctx) => {
+      if (ctx.path.startsWith("/sign-up")) {
+        const newSession = ctx.context.newSession;
+        if (newSession) {
+          ctx.context.runInBackground(
+            sendAnalyticsEvent(newSession.user.id)
+          );
+        }
+      }
+    }),
+  },
+});
+```
+
+### `runInBackgroundOrAwait`
+
+Defers the task when a background task handler is configured; awaits it otherwise. Use for operations that must eventually complete, like sending welcome emails:
+
+```typescript title="auth.ts"
+export const auth = betterAuth({
+  hooks: {
+    after: createAuthMiddleware(async (ctx) => {
+      if (ctx.path.startsWith("/sign-up")) {
+        const newSession = ctx.context.newSession;
+        if (newSession) {
+          await ctx.context.runInBackgroundOrAwait(
+            sendWelcomeEmail(newSession.user)
+          );
+        }
+      }
+    }),
+  },
+});
+```
+
+## Reusable hooks
+
+If you need to share hook logic across multiple projects or endpoints, package it as a [plugin](/concepts/plugins). Plugins support the same `hooks` API with an additional `matcher` function for selective application.

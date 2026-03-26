@@ -1,0 +1,129 @@
+---
+title: SvelteKit integration
+description: Integrate Better Auth with SvelteKit using server hooks and Svelte stores.
+---
+
+Better Auth integrates with SvelteKit through a server hook handler and a Svelte-aware auth client. Before you start, make sure you have a Better Auth instance configured. If you haven't done that yet, check out the [installation](/installation).
+
+## Mount the handler
+
+Register Better Auth inside SvelteKit's `hooks.server.ts` using `svelteKitHandler` from `better-auth/svelte-kit`. The handler intercepts requests to the auth base path and forwards them to Better Auth; all other requests are passed through to `resolve`.
+
+```typescript hooks.server.ts
+import { auth } from "$lib/auth";
+import { svelteKitHandler } from "better-auth/svelte-kit";
+import { building } from "$app/environment";
+
+export async function handle({ event, resolve }) {
+  return svelteKitHandler({ event, resolve, auth, building });
+}
+```
+
+The `building` flag prevents Better Auth from running during SvelteKit's static build step.
+
+## Populate session data in locals
+
+`svelteKitHandler` does not automatically populate `event.locals`. If you need access to the current user in server load functions, form actions, or endpoints, fetch the session and assign it in the `handle` hook:
+
+```typescript hooks.server.ts
+import { auth } from "$lib/auth";
+import { svelteKitHandler } from "better-auth/svelte-kit";
+import { building } from "$app/environment";
+
+export async function handle({ event, resolve }) {
+  const session = await auth.api.getSession({
+    headers: event.request.headers,
+  });
+
+  if (session) {
+    event.locals.session = session.session;
+    event.locals.user = session.user;
+  }
+
+  return svelteKitHandler({ event, resolve, auth, building });
+}
+```
+
+<Note>
+  Declare the `session` and `user` types on `App.Locals` in your `src/app.d.ts` file so TypeScript recognises them throughout your app.
+</Note>
+
+## Server action cookies
+
+To ensure cookies are set correctly when you call functions like `signInEmail` or `signUpEmail` inside a server action, add the `sveltekitCookies` plugin to your auth instance.
+
+<Note>
+  `getRequestEvent` is available from SvelteKit 2.20.0 and later. Make sure you are on a compatible version.
+</Note>
+
+```typescript lib/auth.ts
+import { betterAuth } from "better-auth";
+import { sveltekitCookies } from "better-auth/svelte-kit";
+import { getRequestEvent } from "$app/server";
+
+export const auth = betterAuth({
+  // ...your config
+  plugins: [sveltekitCookies(getRequestEvent)], // must be the last plugin in the array
+});
+```
+
+## Create a client
+
+Create an auth client instance and export it from a shared module. Import from `better-auth/svelte` to get Svelte-specific reactive stores.
+
+```typescript lib/auth-client.ts
+import { createAuthClient } from "better-auth/svelte";
+
+export const authClient = createAuthClient({
+  // optional client configuration
+});
+```
+
+The client uses [nano-stores](https://github.com/nanostores/nanostores) internally, so reactive values update automatically when session state changes (e.g. after sign-in or sign-out).
+
+### useSession store
+
+`authClient.useSession()` returns a nano-store. Subscribe to it with the `$` prefix in Svelte components.
+
+```svelte +page.svelte
+<script lang="ts">
+  import { authClient } from "$lib/auth-client";
+
+  const session = authClient.useSession();
+</script>
+
+<div>
+  {#if $session.data}
+    <p>{$session.data.user.name}</p>
+    <button on:click={async () => await authClient.signOut()}>
+      Sign out
+    </button>
+  {:else}
+    <button
+      on:click={async () =>
+        await authClient.signIn.social({ provider: "github" })}
+    >
+      Continue with GitHub
+    </button>
+  {/if}
+</div>
+```
+
+## Server-side session access in load functions
+
+Because you populated `event.locals` in the hook, you can read the session directly from `locals` in any server load function without an additional database call.
+
+```typescript routes/dashboard/+page.server.ts
+import { redirect } from "@sveltejs/kit";
+import type { PageServerLoad } from "./$types";
+
+export const load: PageServerLoad = async ({ locals }) => {
+  if (!locals.session) {
+    throw redirect(302, "/sign-in");
+  }
+
+  return {
+    user: locals.user,
+  };
+};
+```

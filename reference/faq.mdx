@@ -1,0 +1,209 @@
+---
+title: FAQ
+description: Frequently asked questions about Better Auth.
+---
+
+<AccordionGroup>
+  <Accordion title="Can I use Better Auth with [framework]?">
+    Better Auth is framework-agnostic. It exposes a standard
+    [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) /
+    [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response)
+    handler that integrates with any server framework that supports the Web
+    Fetch API, including Next.js, Nuxt, SvelteKit, Astro, Hono, Elysia, Remix,
+    Express, Fastify, and more.
+
+    Framework-specific helpers (e.g. `toNextJsHandler`) are available in the
+    `better-auth` package for the most common runtimes.
+  </Accordion>
+
+  <Accordion title="Does Better Auth support edge runtimes?">
+    Yes. Better Auth runs on edge runtimes such as Cloudflare Workers and
+    Vercel Edge Functions. Make sure the `nodejs_compat` compatibility flag is
+    enabled in `wrangler.toml` for Cloudflare Workers:
+
+    ```toml title="wrangler.toml"
+    compatibility_flags = ["nodejs_compat"]
+    ```
+
+    For best results on serverless/edge platforms, pair it with a compatible
+    database (e.g. Cloudflare D1, Turso, Neon) and optionally a KV store for
+    sessions.
+  </Accordion>
+
+  <Accordion title="Is Better Auth production-ready?">
+    Yes. Better Auth is used in production by many teams. It is actively
+    maintained, has a comprehensive test suite, and follows security best
+    practices (CSRF protection, scrypt password hashing, secure cookies, rate
+    limiting, PKCE for OAuth, etc.).
+  </Accordion>
+
+  <Accordion title="How do I add custom fields to the user?">
+    Use the `user.additionalFields` config option:
+
+    ```ts title="auth.ts"
+    export const auth = betterAuth({
+      user: {
+        additionalFields: {
+          role: {
+            type: "string",
+            input: false, // not settable by the client
+          },
+        },
+      },
+    });
+    ```
+
+    Set `input: false` for fields that should not be writable by end users
+    (e.g. `role`, `banned`). See the
+    [TypeScript docs](/concepts/typescript#additional-fields) for type
+    inference on the client.
+  </Accordion>
+
+  <Accordion title="How do I rotate my secret key?">
+    Use the `secrets` option (plural) to perform a non-destructive rotation.
+    The first entry becomes the active key; additional entries are
+    decryption-only:
+
+    ```ts title="auth.ts"
+    secrets: [
+      { version: 2, value: process.env.SECRET_V2! }, // new key
+      { version: 1, value: process.env.SECRET_V1! }, // old key (kept for decryption)
+    ]
+    ```
+
+    Existing encrypted data (sessions, tokens) is automatically re-encrypted
+    with the new key on next write. No downtime or database migrations are
+    required. See the [security docs](/reference/security#secret-rotation) for
+    details.
+  </Accordion>
+
+  <Accordion title="Auth client not working">
+    Make sure you are using the correct import path. It differs by environment:
+
+    ```ts
+    // React frontend
+    import { createAuthClient } from "better-auth/react";
+
+    // Server (Next.js server actions, middleware, API routes)
+    import { createAuthClient } from "better-auth/client";
+    ```
+  </Accordion>
+
+  <Accordion title="getSession not working on the server">
+    `authClient.getSession()` cannot access cookies in server environments.
+    Use `auth.api.getSession` and pass the request headers:
+
+    ```ts title="server.tsx"
+    import { auth } from "./auth";
+    import { headers } from "next/headers";
+
+    const session = await auth.api.getSession({
+      headers: await headers(),
+    });
+    ```
+
+    If you need to use the auth client on the server, forward the headers via
+    `fetchOptions`:
+
+    ```ts
+    const session = await authClient.getSession({
+      fetchOptions: { headers: await headers() },
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="Difference between getSession and useSession">
+    - **`useSession`** is a React hook. It triggers re-renders when the
+      session changes and is suitable for reactive UI updates.
+    - **`getSession`** returns a plain promise. Use it anywhere a hook cannot
+      be called: server components, route handlers, server actions, or
+      non-React environments.
+
+    <Warning>
+      Avoid calling `useSession` in a `layout.tsx` file for performance
+      reasons. Prefer `auth.api.getSession` in server components.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="Can I remove name, image, or email from the user table?">
+    Not currently. The `name`, `email`, and `image` fields are part of the
+    core schema. Greater schema customisation is planned for a future release.
+  </Accordion>
+
+  <Accordion title="Common TypeScript errors">
+    Enable `strict` mode in your `tsconfig.json`:
+
+    ```json title="tsconfig.json"
+    {
+      "compilerOptions": {
+        "strict": true
+      }
+    }
+    ```
+
+    If you cannot use `strict`, enable `strictNullChecks` at minimum. See the
+    [TypeScript docs](/concepts/typescript#recommended-tsconfig) for more.
+  </Accordion>
+
+  <Accordion title="Dual Module Hazard: 'No request state found'">
+    If you see an error like:
+
+    ```
+    No request state found. Please make sure you are calling this function within a `runWithRequestState` callback.
+    ```
+
+    This is usually caused by multiple versions of `better-auth` or
+    `@better-auth/core` in your dependency tree.
+
+    **Diagnose:**
+
+    ```bash
+    pnpm why @better-auth/core
+    pnpm why better-auth
+    ```
+
+    **Fix — clean reinstall:**
+
+    ```bash
+    rm -rf node_modules pnpm-lock.yaml
+    pnpm install
+    ```
+
+    **Next.js — add to `serverExternalPackages`:**
+
+    ```ts title="next.config.ts"
+    const config = {
+      serverExternalPackages: ["better-auth"],
+    };
+    ```
+
+    **Cloudflare Workers — enable Node.js compat:**
+
+    ```toml title="wrangler.toml"
+    compatibility_flags = ["nodejs_compat"]
+    ```
+
+    **Yarn v1 / pnpm v9 — force `better-call` to a single instance:**
+
+    ```json title="package.json"
+    {
+      "dependencies": { "better-call": "^1.1.8" },
+      "resolutions": { "better-call": "^1.1.8" }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="How do I configure a corporate proxy for outbound requests?">
+    Use `undici`'s `ProxyAgent` to set a global dispatcher before creating your
+    auth instance:
+
+    ```ts title="auth.ts"
+    import { betterAuth } from "better-auth";
+    import { ProxyAgent, setGlobalDispatcher } from "undici";
+
+    setGlobalDispatcher(new ProxyAgent("http://your-proxy.example.com:8080"));
+
+    export const auth = betterAuth({ /* ... */ });
+    ```
+  </Accordion>
+</AccordionGroup>

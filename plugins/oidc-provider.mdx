@@ -1,0 +1,306 @@
+---
+title: OIDC Provider
+description: Turn Better Auth into a full OpenID Connect identity provider with client registration, consent flows, and JWKS endpoints.
+---
+
+<Warning>
+  This plugin will soon be deprecated in favor of a newer OAuth Provider plugin. New projects should check the Better Auth documentation for the most up-to-date provider plugin.
+</Warning>
+
+The OIDC Provider plugin enables you to build and manage your own OpenID Connect (OIDC) provider using Better Auth. Other services can authenticate users through your OIDC provider instead of relying on third-party services like Okta or Azure AD.
+
+**Key capabilities:**
+
+- Client registration (static trusted clients and dynamic registration)
+- Authorization Code Flow
+- Refresh token support
+- OAuth consent screens (with bypass support for trusted apps)
+- UserInfo endpoint
+- JWKS endpoint integration via the JWT plugin
+- Custom claims
+
+<Warning>
+  This plugin is in active development. Report any issues on [GitHub](https://github.com/better-auth/better-auth).
+</Warning>
+
+## Installation
+
+<Steps>
+  <Step>
+    ### Add the plugin to your auth config
+
+    ```ts title="auth.ts"
+    import { betterAuth } from "better-auth"
+    import { oidcProvider } from "better-auth/plugins"
+
+    const auth = betterAuth({
+      plugins: [
+        oidcProvider({
+          loginPage: "/sign-in",
+        }),
+      ],
+    })
+    ```
+  </Step>
+
+  <Step>
+    ### Migrate the database
+
+    ```bash
+    npx auth migrate
+    ```
+  </Step>
+
+  <Step>
+    ### Add the client plugin
+
+    ```ts title="auth-client.ts"
+    import { createAuthClient } from "better-auth/client"
+    import { oidcClient } from "better-auth/client/plugins"
+
+    const authClient = createAuthClient({
+      plugins: [
+        oidcClient(),
+      ],
+    })
+    ```
+  </Step>
+</Steps>
+
+## Registering clients
+
+### Dynamic registration
+
+Clients can register via the `/oauth2/register` endpoint (RFC 7591):
+
+```ts
+const result = await authClient.oauth2.register({
+  redirect_uris: ["https://client.example.com/callback"],
+  client_name: "My App",
+  grant_types: ["authorization_code"],
+  response_types: ["code"],
+  token_endpoint_auth_method: "client_secret_basic",
+  scope: "openid profile email",
+})
+
+// Save the returned client_id and client_secret
+console.log(result.client_id, result.client_secret)
+```
+
+Dynamic registration requires authentication by default. To allow public registration:
+
+```ts
+oidc Provider({
+  allowDynamicClientRegistration: true,
+})
+```
+
+### Trusted clients (static configuration)
+
+For first-party applications, configure trusted clients directly. They bypass database lookups and can skip the consent screen:
+
+```ts title="auth.ts"
+oidcProvider({
+  loginPage: "/sign-in",
+  trustedClients: [
+    {
+      clientId: "internal-dashboard",
+      clientSecret: "secure-secret",
+      name: "Internal Dashboard",
+      type: "web",
+      redirectUrls: ["https://dashboard.company.com/auth/callback"],
+      skipConsent: true,  // bypass consent for this trusted client
+      disabled: false,
+      metadata: { internal: true },
+    },
+    {
+      clientId: "mobile-app",
+      clientSecret: "mobile-secret",
+      name: "Company Mobile App",
+      type: "native",
+      redirectUrls: ["com.company.app://auth"],
+      skipConsent: false,
+    },
+  ],
+})
+```
+
+## OIDC endpoints
+
+The plugin exposes these standard OIDC endpoints:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/auth/oauth2/authorize` | Authorization endpoint |
+| `POST /api/auth/oauth2/token` | Token endpoint |
+| `GET /api/auth/oauth2/userinfo` | UserInfo endpoint |
+| `POST /api/auth/oauth2/consent` | Consent submission |
+| `POST /api/auth/oauth2/register` | Dynamic client registration |
+| `GET /api/auth/.well-known/openid-configuration` | OIDC discovery document |
+
+## UserInfo endpoint
+
+The UserInfo endpoint returns claims based on the granted scopes:
+
+| Scope | Claims returned |
+|-------|----------------|
+| `openid` | `sub` (user ID) |
+| `profile` | `name`, `picture`, `given_name`, `family_name` |
+| `email` | `email`, `email_verified` |
+
+**Server-side:**
+
+```ts
+const userInfo = await auth.api.oAuth2userInfo({
+  headers: { authorization: "Bearer ACCESS_TOKEN" },
+})
+```
+
+**External client:**
+
+```ts
+const response = await fetch("https://your-domain.com/api/auth/oauth2/userinfo", {
+  headers: { Authorization: "Bearer ACCESS_TOKEN" },
+})
+const userInfo = await response.json()
+```
+
+### Custom claims
+
+```ts title="auth.ts"
+oidcProvider({
+  loginPage: "/sign-in",
+  getAdditionalUserInfoClaim: async (user, scopes, client) => {
+    const claims: Record<string, any> = {}
+
+    if (scopes.includes("profile")) {
+      claims.department = user.department
+      claims.job_title = user.jobTitle
+    }
+
+    if (client.metadata?.includeRoles) {
+      claims.roles = user.roles
+    }
+
+    return claims
+  },
+})
+```
+
+Custom claims appear in both the UserInfo response and the ID token.
+
+## Consent screen
+
+By default, Better Auth shows a built-in consent screen. Customize it with a `consentPage` path:
+
+```ts title="auth.ts"
+oidcProvider({
+  consentPage: "/oauth/consent",
+})
+```
+
+Better Auth redirects to this path with `consent_code`, `client_id`, and `scope` query parameters. After the user consents, call:
+
+```ts
+// Method 1: pass consent_code from URL parameter
+const params = new URLSearchParams(window.location.search)
+await authClient.oauth2.consent({
+  accept: true,
+  consent_code: params.get("consent_code"),
+})
+
+// Method 2: cookie-based (simpler for web apps)
+await authClient.oauth2.consent({
+  accept: true,
+})
+```
+
+<Note>
+  Trusted clients with `skipConsent: true` bypass the consent screen entirely.
+</Note>
+
+## Handling login
+
+When users are not signed in and reach the authorization endpoint, they are redirected to `loginPage`. After a new session is created, the plugin automatically continues the authorization flow.
+
+```ts title="auth.ts"
+oidcProvider({
+  loginPage: "/sign-in",  // redirect here if user is not logged in
+})
+```
+
+## JWKS integration
+
+Combine with the JWT plugin for asymmetric ID token signing:
+
+```ts title="auth.ts"
+import { betterAuth } from "better-auth"
+import { jwt, oidcProvider } from "better-auth/plugins"
+
+const auth = betterAuth({
+  disabledPaths: ["/token"],  // disable JWT plugin's /token (conflicts with /oauth2/token)
+  plugins: [
+    jwt(),
+    oidcProvider({
+      useJWTPlugin: true,       // sign ID tokens with JWT plugin's keys
+      loginPage: "/sign-in",
+    }),
+  ],
+})
+```
+
+<Note>
+  When `useJWTPlugin` is `false` (default), ID tokens are signed with HMAC-SHA256 using the application secret.
+</Note>
+
+## Customize OIDC metadata
+
+```ts title="auth.ts"
+oidcProvider({
+  metadata: {
+    issuer: "https://your-domain.com",
+    authorization_endpoint: "/custom/oauth2/authorize",
+    token_endpoint: "/custom/oauth2/token",
+  },
+})
+```
+
+## Schema
+
+### oauthApplication
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `string` | Primary key |
+| `clientId` | `string` | Unique OAuth client identifier |
+| `clientSecret` | `string` | Client secret (optional for public clients) |
+| `name` | `string` | Application name |
+| `redirectUrls` | `string` | Comma-separated redirect URLs |
+| `type` | `string` | Client type (web, native, etc.) |
+| `disabled` | `boolean` | Whether the client is disabled |
+| `userId` | `string` | Owner user ID (optional) |
+| `icon` | `string` | Application icon URL |
+| `metadata` | `string` | Additional metadata (JSON) |
+| `createdAt` | `Date` | Creation timestamp |
+| `updatedAt` | `Date` | Last update timestamp |
+
+### oauthAccessToken
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `accessToken` | `string` | The access token |
+| `refreshToken` | `string` | The refresh token |
+| `accessTokenExpiresAt` | `Date` | Access token expiration |
+| `refreshTokenExpiresAt` | `Date` | Refresh token expiration |
+| `clientId` | `string` | Associated OAuth client |
+| `userId` | `string` | Associated user |
+| `scopes` | `string` | Granted scopes (comma-separated) |
+
+### oauthConsent
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `userId` | `string` | User who gave consent |
+| `clientId` | `string` | OAuth client |
+| `scopes` | `string` | Consented scopes (comma-separated) |
+| `consentGiven` | `boolean` | Whether consent was granted |

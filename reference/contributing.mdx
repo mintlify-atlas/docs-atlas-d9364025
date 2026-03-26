@@ -1,0 +1,212 @@
+---
+title: Contributing
+description: How to set up a development environment, run tests, and submit pull requests to Better Auth.
+---
+
+Thank you for your interest in contributing to Better Auth! This page covers
+everything you need to get started.
+
+<CardGroup cols={2}>
+  <Card title="GitHub Issues" icon="circle-dot" href="https://github.com/better-auth/better-auth/issues">
+    Browse open issues or report a bug.
+  </Card>
+  <Card title="Discord" icon="discord" href="https://discord.gg/better-auth">
+    Ask questions and discuss ideas with the community.
+  </Card>
+</CardGroup>
+
+---
+
+## Development setup
+
+<Warning>
+  Make sure you have [Node.js LTS](https://nodejs.org/en/download) and
+  [pnpm](https://pnpm.io/installation) installed before continuing.
+</Warning>
+
+<Steps>
+  <Step title="Fork and clone the repository">
+    Visit [github.com/better-auth/better-auth](https://github.com/better-auth/better-auth)
+    and click **Fork**. Then clone your fork:
+
+    ```bash
+    git clone https://github.com/YOUR-USERNAME/better-auth.git
+    cd better-auth
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    ```bash
+    pnpm install
+    ```
+  </Step>
+
+  <Step title="Set up environment variables">
+    ```bash
+    cp -n ./docs/.env.example ./docs/.env
+    ```
+  </Step>
+
+  <Step title="Create a feature branch">
+    ```bash
+    git remote add upstream https://github.com/better-auth/better-auth.git
+    git checkout canary
+    git pull upstream canary
+    git checkout -b feat/your-feature-name
+    ```
+  </Step>
+
+  <Step title="Start the development server">
+    ```bash
+    # Main package
+    pnpm dev
+
+    # Documentation site
+    pnpm -F docs dev
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Running tests
+
+Better Auth uses [Vitest](https://vitest.dev/). Test files live next to the
+source files they cover.
+
+```bash
+# Run a specific test file
+vitest packages/better-auth/src/auth/auth.test.ts
+
+# Run tests matching a pattern
+vitest packages/better-auth/src -t "sign up"
+```
+
+<Warning>
+  Do not run `pnpm test` at the repo root — it runs all tests across all
+  packages and takes a long time. Target specific files or patterns instead.
+</Warning>
+
+Adapter tests (PostgreSQL, MySQL, etc.) require Docker:
+
+```bash
+docker compose up -d
+vitest e2e/adapter
+```
+
+### Using the test instance helper
+
+```ts
+import { describe, it, expect } from "vitest";
+import { getTestInstance } from "better-auth/test";
+
+describe("my feature", () => {
+  it("works as expected", async () => {
+    const { client } = await getTestInstance();
+    const result = await client.signUp.email({
+      email: "test@example.com",
+      password: "password",
+      name: "Test User",
+    });
+    expect(result.data).toBeDefined();
+  });
+});
+```
+
+The helper also exposes `runWithUser` and `signInWithTestUser` for
+authenticated test scenarios:
+
+```ts
+const { client, runWithUser } = await getTestInstance();
+
+await runWithUser("user@example.com", "password", async (headers) => {
+  const session = await client.getSession({ fetchOptions: { headers } });
+  expect(session.data).not.toBeNull();
+});
+```
+
+---
+
+## Code style
+
+Better Auth uses [Biome](https://biomejs.dev/) for formatting and linting.
+
+```bash
+# Check formatting
+pnpm format:check
+
+# Fix formatting
+pnpm format
+
+# Lint
+pnpm lint
+
+# Fix lint issues
+pnpm lint:fix
+
+# Type check
+pnpm typecheck
+```
+
+All CI checks must pass before a PR is merged. Run the checks locally before
+opening a PR:
+
+```bash
+pnpm format:check && pnpm lint && pnpm typecheck
+```
+
+**Style rules:**
+
+- Use tabs for indentation in TypeScript; 2 spaces in JSON.
+- Avoid `any` types and unsafe typecasts.
+- Prefer functions and plain objects over classes.
+- Do not use runtime-specific APIs like `Buffer` in library code. Use
+  `Uint8Array` instead.
+
+---
+
+## PR guidelines
+
+- Target the **`canary`** branch, not `main`.
+- Use [Conventional Commits](https://www.conventionalcommits.org/) for commit
+  messages:
+
+  ```
+  feat(scope): add X
+  fix(scope): resolve Y
+  docs: update contributing guide
+  chore: bump dependencies
+  ```
+
+- Keep PRs focused on a single change.
+- Add tests for new features and bug fixes.
+- Update documentation when changing public APIs.
+- If a PR fixes a numbered GitHub issue, add a JSDoc `@see` comment to the
+  relevant test:
+
+  ```ts
+  /**
+   * @see https://github.com/better-auth/better-auth/issues/1234
+   */
+  it("should handle the previously broken behavior", async () => { /* ... */ });
+  ```
+
+---
+
+## Contribution areas
+
+| Area | Notes |
+| ---- | ----- |
+| Bug fixes | Check issues labeled `good first issue` |
+| Framework integrations | Prefer framework-agnostic solutions; keep minimal |
+| Core plugins | Open an issue to discuss before implementing |
+| Community plugins | Develop independently and share on Discord |
+| Documentation | Fix typos, add examples, keep docs in sync with code |
+
+---
+
+## Need help?
+
+- Open a [GitHub issue](https://github.com/better-auth/better-auth/issues)
+- Ask in [Discord](https://discord.gg/better-auth)
+- Reach out to the maintainers
